@@ -14,6 +14,13 @@ services:
       - APP_WEBHOOK_BASE_URL=${APP_WEBHOOK_BASE_URL:-}
       - APP_AUTH_API_KEY=${APP_AUTH_API_KEY}
       - APP_LOG_LEVEL=info
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.alfredo.rule=Host(`rsk-apps.cloud`)"
+      - "traefik.http.routers.alfredo.entrypoints=websecure"
+      - "traefik.http.routers.alfredo.tls=true"
+      - "traefik.http.routers.alfredo.tls.certresolver=letsencrypt"
+      - "traefik.http.services.alfredo.loadbalancer.server.port=8080"
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:8080/api/v1/health"]
       interval: 30s
