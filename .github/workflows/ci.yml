@@ -50,3 +50,22 @@ jobs:
 
       - name: Push to GHCR
         run: docker push ghcr.io/${{ github.repository }}:latest
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Deploy to Hostinger
+        uses: hostinger/deploy-on-vps@v2
+        with:
+          api-key: ${{ secrets.HOSTINGER_API_KEY }}
+          virtual-machine: ${{ vars.HOSTINGER_VM_ID }}
+          docker-compose-path: docker-compose.prod.yml
+          environment-variables: |
+            IMAGE_TAG=latest
+            APP_AUTH_API_KEY=${{ secrets.APP_AUTH_API_KEY }}
+            APP_WEBHOOK_BASE_URL=${{ secrets.APP_WEBHOOK_BASE_URL }}
