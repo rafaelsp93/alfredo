@@ -1,0 +1,30 @@
+meta {
+  name: Record Vaccine
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/api/v1/pets/:id/vaccines
+  body: json
+  auth: none
+}
+
+headers {
+  Authorization: Bearer {{apiKey}}
+}
+
+params:path {
+  id: {{petId}}
+}
+
+body:json {
+  {
+    "name": "Rabies",
+    "date": "2026-03-27T10:00:00Z",
+    "next_due_at": "2027-03-27",
+    "vet_name": "Dr. Costa",
+    "batch_number": "BATCH-2026-001",
+    "notes": "Annual vaccination"
+  }
+}

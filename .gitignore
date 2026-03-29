@@ -1,0 +1,38 @@
+# Binaries
+alfredo
+server
+*.exe
+*.test
+*.out
+*.bin
+
+# Data
+data/*.db
+*.db
+photos/
+
+# Logs
+*.log
+
+# Swift build artifacts
+swift/CalendarHelper/.build/
+
+# IDE / OS
+.DS_Store
+.idea/
+.vscode/
+
+# Claude / Superpowers
+.claude/
+.superpowers/
+.worktrees/
+
+# Runtime artifacts
+calendar.pid
+
+# ntfy
+data/
+.env
+
+
+.worktrees/

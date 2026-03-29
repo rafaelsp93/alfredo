@@ -1,0 +1,30 @@
+meta {
+  name: Update Pet
+  type: http
+  seq: 4
+}
+
+put {
+  url: {{baseUrl}}/api/v1/pets/:id
+  body: json
+  auth: none
+}
+
+headers {
+  Authorization: Bearer {{apiKey}}
+}
+
+params:path {
+  id: {{petId}}
+}
+
+body:json {
+  {
+    "name": "Nutella",
+    "species": "dog",
+    "breed": "Golden Retriever",
+    "birth_date": "2022-06-15",
+    "weight_kg": 30.0,
+    "daily_food_grams": 300
+  }
+}

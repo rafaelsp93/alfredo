@@ -1,0 +1,17 @@
+version: "2"
+quiet: false
+disable-version-string: false
+with-expecter: true
+packages:
+  github.com/rafaelsoares/alfredo/internal/calendar/adapters/primary/http:
+    config:
+      dir: "{{.InterfaceDir}}/mocks"
+      outpkg: mocks
+  github.com/rafaelsoares/alfredo/internal/petcare/adapters/primary/http:
+    config:
+      dir: "{{.InterfaceDir}}/mocks"
+      outpkg: mocks
+  github.com/rafaelsoares/alfredo/internal/app:
+    config:
+      dir: "{{.InterfaceDir}}/mocks"
+      outpkg: mocks
