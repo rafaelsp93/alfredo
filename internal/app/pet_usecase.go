@@ -65,13 +65,13 @@ func (uc *PetUseCase) Delete(ctx context.Context, id string) error {
 	}
 
 	uc.emitter.Emit(ctx, "pet.deleted", petDeletedPayload{
-		ID:   pet.ID,
-		Name: pet.Name,
+		PetID: pet.ID,
+		Name:  pet.Name,
 	})
 	return nil
 }
 
 type petDeletedPayload struct {
-	ID   string `json:"id"`
-	Name string `json:"pet_name"`
+	PetID string `json:"pet_id"`
+	Name  string `json:"pet_name"`
 }

@@ -59,7 +59,15 @@ func (uc *VaccineUseCase) RecordVaccine(ctx context.Context, in service.RecordVa
 }
 
 func (uc *VaccineUseCase) DeleteVaccine(ctx context.Context, petID, vaccineID string) error {
-	return uc.vaccine.DeleteVaccine(ctx, petID, vaccineID)
+	if err := uc.vaccine.DeleteVaccine(ctx, petID, vaccineID); err != nil {
+		return err
+	}
+	uc.emitter.Emit(ctx, "vaccine.deleted", vaccineDeletedPayload{
+		PetID:     petID,
+		PetName:   uc.petName(ctx, petID),
+		VaccineID: vaccineID,
+	})
+	return nil
 }
 
 // --- Payload types ---
@@ -78,4 +86,10 @@ type vaccineExpirePayload struct {
 	VaccineID   string    `json:"vaccine_id"`
 	VaccineName string    `json:"vaccine_name"`
 	ExpireAt    time.Time `json:"expire_at"`
+}
+
+type vaccineDeletedPayload struct {
+	PetID     string `json:"pet_id"`
+	PetName   string `json:"pet_name"`
+	VaccineID string `json:"vaccine_id"`
 }

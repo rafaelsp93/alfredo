@@ -12,6 +12,7 @@ internal/
   config/                   — unified Viper config
   logger/                   — Zap logger helpers for Echo context
   shared/health/            — shared HealthResult, DependencyStatus types
+  webhook/                  — HTTP emitter (no-op when base_url is empty)
   petcare/                  — pet-care domain
     domain/                 — Pet, Vaccine types
     port/                   — repository interfaces only
@@ -60,6 +61,14 @@ bruno/
 
 **Import**: Open Bruno → Import Collection → select `bruno/` folder → set environment to **Local**.
 
+## Authentication
+
+All routes except `GET /api/v1/health` require an API key. Accepted headers (first match wins):
+- `Authorization: Bearer <key>`
+- `X-Api-Key: <key>`
+
+> **Gotcha**: The server refuses to start if `APP_AUTH_API_KEY` is empty.
+
 ## Development
 
 ```bash
@@ -69,6 +78,14 @@ make stop           # kill server using alfredo.pid
 make test           # go test ./internal/...
 make tidy           # go mod tidy
 make generate       # mockery
+```
+
+`make run` auto-sources `.env` from the project root if present — use it to set `APP_AUTH_API_KEY` and other vars locally without modifying `config.yaml`.
+
+### Production
+
+```bash
+docker compose -f docker-compose.prod.yml up -d   # uses ghcr.io/rafaelsoares/alfredo
 ```
 
 ## Prerequisites
@@ -113,8 +130,9 @@ All events are posted to `POST {base_url}/events`. The n8n workflow uses a Switc
 | Event | Trigger | Key payload fields |
 |---|---|---|
 | `pet.created` | `POST /api/v1/pets` | `id`, `name`, `species`, `breed`, `birth_date` |
+| `pet.deleted` | `DELETE /api/v1/pets/:id` | `pet_id`, `pet_name` |
 | `vaccine.taken` | `POST /api/v1/pets/:id/vaccines` | `pet_id`, `pet_name`, `vaccine_id`, `vaccine_name`, `date` |
 | `vaccine.expire` | `POST /api/v1/pets/:id/vaccines` ¹ | `pet_id`, `pet_name`, `vaccine_id`, `vaccine_name`, `expire_at` |
-| `vaccine.deleted` | `DELETE /api/v1/pets/:id/vaccines/:vid` | `pet_id`, `vaccine_id` |
+| `vaccine.deleted` | `DELETE /api/v1/pets/:id/vaccines/:vid` | `pet_id`, `pet_name`, `vaccine_id` |
 
 ¹ Only emitted when `next_due_at` is set.
