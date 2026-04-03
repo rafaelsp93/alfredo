@@ -4,6 +4,7 @@ package sqlite
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"time"
 
@@ -114,7 +115,7 @@ func (r *DoseRepository) LatestDoseFor(ctx context.Context, treatmentID string) 
 		treatmentID)
 	d, err := scanDose(row)
 	if err != nil {
-		if err.Error() == "sql: no rows in result set" {
+		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nil
 		}
 		return nil, err

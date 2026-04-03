@@ -69,7 +69,15 @@ func (r *TreatmentRepository) Stop(ctx context.Context, treatmentID string, stop
 		return err
 	}
 	if n, _ := res.RowsAffected(); n == 0 {
-		return domain.ErrNotFound
+		// Check whether the treatment exists at all (vs. already stopped).
+		var count int
+		if err := r.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM treatments WHERE id = ?`, treatmentID).Scan(&count); err != nil {
+			return err
+		}
+		if count == 0 {
+			return domain.ErrNotFound
+		}
+		return domain.ErrAlreadyStopped
 	}
 	return nil
 }

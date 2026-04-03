@@ -92,6 +92,9 @@ func mapError(c echo.Context, err error) error {
 		logger.SetError(c, "validation_failed")
 		msg := strings.TrimPrefix(err.Error(), "validation failed: ")
 		return c.JSON(http.StatusBadRequest, newErrorResponse("validation_failed", msg, nil))
+	case errors.Is(err, domain.ErrAlreadyStopped):
+		logger.SetError(c, "already_stopped")
+		return c.JSON(http.StatusConflict, newErrorResponse("already_stopped", "Treatment has already been stopped", nil))
 	default:
 		logger.SetError(c, "internal_error")
 		return c.JSON(http.StatusInternalServerError, newErrorResponse("internal_error", "An unexpected error occurred", nil))

@@ -59,6 +59,7 @@ func (e *DoseExtender) ExtendOnce(ctx context.Context) {
 
 // Run starts the extension job on a daily ticker until ctx is cancelled.
 func (e *DoseExtender) Run(ctx context.Context) {
+	e.ExtendOnce(ctx) // run immediately at startup, then on daily ticker
 	ticker := time.NewTicker(24 * time.Hour)
 	defer ticker.Stop()
 	for {

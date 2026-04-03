@@ -57,17 +57,19 @@ func (uc *TreatmentUseCase) Create(ctx context.Context, in service.CreateTreatme
 	if err := uc.doses.CreateBatch(ctx, doses); err != nil {
 		return nil, nil, err
 	}
-	uc.emitter.Emit(ctx, "treatment.doses_scheduled", treatmentDosesScheduledPayload{
-		PetID:         tr.PetID,
-		PetName:       uc.petName(ctx, tr.PetID),
-		TreatmentID:   tr.ID,
-		TreatmentName: tr.Name,
-		DosageAmount:  tr.DosageAmount,
-		DosageUnit:    tr.DosageUnit,
-		Route:         tr.Route,
-		IntervalHours: tr.IntervalHours,
-		Doses:         toDosePayloads(doses),
-	})
+	if len(doses) > 0 {
+		uc.emitter.Emit(ctx, "treatment.doses_scheduled", treatmentDosesScheduledPayload{
+			PetID:         tr.PetID,
+			PetName:       uc.petName(ctx, tr.PetID),
+			TreatmentID:   tr.ID,
+			TreatmentName: tr.Name,
+			DosageAmount:  tr.DosageAmount,
+			DosageUnit:    tr.DosageUnit,
+			Route:         tr.Route,
+			IntervalHours: tr.IntervalHours,
+			Doses:         toDosePayloads(doses),
+		})
+	}
 	return tr, doses, nil
 }
 
@@ -108,11 +110,11 @@ func (uc *TreatmentUseCase) Stop(ctx context.Context, petID, treatmentID string)
 		return err
 	}
 	now := time.Now().UTC()
-	deletedIDs, err := uc.doses.DeleteFutureDoses(ctx, treatmentID, now)
-	if err != nil {
+	if err := uc.treatments.Stop(ctx, petID, treatmentID); err != nil {
 		return err
 	}
-	if err := uc.treatments.Stop(ctx, petID, treatmentID); err != nil {
+	deletedIDs, err := uc.doses.DeleteFutureDoses(ctx, treatmentID, now)
+	if err != nil {
 		return err
 	}
 	uc.emitter.Emit(ctx, "treatment.stopped", treatmentStoppedPayload{

@@ -53,7 +53,7 @@ internal/
 
 ## API Collection
 
-The `bruno/` directory at repo root contains a [Bruno](https://www.usebruno.com/) importable collection covering all 9 routes. It is the **source of truth for route documentation** — keep it in sync whenever routes are added or removed.
+The `bruno/` directory at repo root contains a [Bruno](https://www.usebruno.com/) importable collection covering all 13 routes. It is the **source of truth for route documentation** — keep it in sync whenever routes are added or removed.
 
 ```
 bruno/

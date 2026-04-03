@@ -11,4 +11,7 @@ var (
 
 	// ErrInternal indicates an unexpected internal error.
 	ErrInternal = errors.New("internal error")
+
+	// ErrAlreadyStopped is returned when a treatment has already been stopped.
+	ErrAlreadyStopped = errors.New("already stopped")
 )

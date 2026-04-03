@@ -167,8 +167,8 @@ type treatmentResponse struct {
 	Route         string         `json:"route"`
 	IntervalHours int            `json:"interval_hours"`
 	StartedAt     string         `json:"started_at"`
-	EndedAt       *string        `json:"ended_at,omitempty"`
-	StoppedAt     *string        `json:"stopped_at,omitempty"`
+	EndedAt       *string        `json:"ended_at"`
+	StoppedAt     *string        `json:"stopped_at"`
 	VetName       *string        `json:"vet_name,omitempty"`
 	Notes         *string        `json:"notes,omitempty"`
 	CreatedAt     string         `json:"created_at"`
