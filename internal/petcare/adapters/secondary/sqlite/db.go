@@ -13,6 +13,9 @@ import (
 //go:embed migrations/001_initial.sql
 var migration001 string
 
+//go:embed migrations/002_treatments.sql
+var migration002 string
+
 // Open opens (or creates) the SQLite database at path, enables foreign keys,
 // and runs the versioned migration runner.
 func Open(path string) (*sql.DB, error) {
@@ -50,6 +53,7 @@ func migrate(db *sql.DB) error {
 		sql     string
 	}{
 		{"001_initial", migration001},
+		{"002_treatments", migration002},
 	}
 
 	for _, m := range migrations {
