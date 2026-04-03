@@ -68,15 +68,20 @@ func main() {
 	// 6. Pet-care repositories
 	petRepo := sqlite.NewPetRepository(db)
 	vaccineRepo := sqlite.NewVaccineRepository(db)
+	treatmentRepo := sqlite.NewTreatmentRepository(db)
+	doseRepo := sqlite.NewDoseRepository(db)
 	dbChecker := sqlite.NewChecker(db)
 
 	// 7. Pet-care services (pure CRUD — no side-effects)
 	petService := petsvc.NewPetService(petRepo)
 	vaccineService := petsvc.NewVaccineService(vaccineRepo, petRepo)
+	treatmentService := petsvc.NewTreatmentService(treatmentRepo)
+	doseService := petsvc.NewDoseService(doseRepo)
 
 	// 8. Use Cases (orchestrate domain + webhook emission)
 	petUC := app.NewPetUseCase(petService, emitter)
 	vaccineUC := app.NewVaccineUseCase(vaccineService, petService, emitter, zapLogger)
+	treatmentUC := app.NewTreatmentUseCase(treatmentService, doseService, petService, emitter, zapLogger)
 
 	// 9. Health aggregator
 	healthAgg := app.NewHealthAggregator(map[string]app.HealthPinger{
@@ -87,6 +92,7 @@ func main() {
 	// 10. HTTP handlers
 	petHandler := pethttp.NewPetHandler(petUC)
 	vaccineHandler := pethttp.NewVaccineHandler(vaccineUC)
+	treatmentHandler := pethttp.NewTreatmentHandler(treatmentUC)
 
 	// 11. Echo instance with global middleware
 	e := echo.New()
@@ -119,6 +125,7 @@ func main() {
 	protected.Use(petmw.APIKeyAuth(cfg.Auth.APIKey))
 	petHandler.Register(protected)
 	vaccineHandler.Register(protected)
+	treatmentHandler.Register(protected)
 
 	// 14. Start server with graceful shutdown
 	addr := fmt.Sprintf("%s:%d", cfg.Server.Host, cfg.Server.Port)
@@ -137,6 +144,12 @@ func main() {
 			zapLogger.Fatal("server error", zap.Error(err))
 		}
 	}()
+
+	// Start dose extender background job
+	extenderCtx, cancelExtender := context.WithCancel(context.Background())
+	defer cancelExtender()
+	doseExtender := app.NewDoseExtender(doseService, petService, emitter, zapLogger)
+	go doseExtender.Run(extenderCtx)
 
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
