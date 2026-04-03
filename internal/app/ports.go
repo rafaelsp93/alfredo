@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"time"
 
 	"github.com/rafaelsoares/alfredo/internal/petcare/domain"
 	"github.com/rafaelsoares/alfredo/internal/petcare/service"
@@ -37,3 +38,22 @@ type VaccineServicer interface {
 
 // HealthResult mirrors shared/health.HealthResult (re-exported for convenience).
 type HealthResult = health.HealthResult
+
+// TreatmentServicer is the narrow interface consumed by TreatmentUseCase.
+type TreatmentServicer interface {
+	Create(ctx context.Context, in service.CreateTreatmentInput) (*domain.Treatment, error)
+	GetByID(ctx context.Context, petID, treatmentID string) (*domain.Treatment, error)
+	List(ctx context.Context, petID string) ([]domain.Treatment, error)
+	Stop(ctx context.Context, petID, treatmentID string) error
+}
+
+// DoseServicer is the narrow interface consumed by TreatmentUseCase and DoseExtender.
+// Satisfied by *service.DoseService.
+type DoseServicer interface {
+	GenerateDoses(t domain.Treatment, upTo time.Time) []domain.Dose
+	CreateBatch(ctx context.Context, doses []domain.Dose) error
+	ListByTreatment(ctx context.Context, treatmentID string) ([]domain.Dose, error)
+	DeleteFutureDoses(ctx context.Context, treatmentID string, after time.Time) ([]string, error)
+	ListOpenEndedActiveTreatments(ctx context.Context) ([]domain.Treatment, error)
+	ExtendOpenEnded(ctx context.Context, t domain.Treatment, windowEnd time.Time) ([]domain.Dose, error)
+}
