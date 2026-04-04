@@ -181,7 +181,7 @@ All routes require the existing API key middleware.
 ```
 # Profile
 GET    /api/v1/fitness/profile
-POST   /api/v1/fitness/profile           — creates if not exists
+POST   /api/v1/fitness/profile           — creates profile; 409 if one already exists
 PUT    /api/v1/fitness/profile
 
 # Workouts
