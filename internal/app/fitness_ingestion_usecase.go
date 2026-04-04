@@ -3,6 +3,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"go.uber.org/zap"
@@ -67,6 +68,10 @@ func (uc *FitnessIngestionUseCase) IngestWorkoutBatch(ctx context.Context, ws []
 	for _, w := range ws {
 		s, err := uc.IngestWorkout(ctx, w)
 		if err != nil {
+			if errors.Is(err, domain.ErrAlreadyExists) {
+				// Workout already ingested — skip silently to make batches idempotent.
+				continue
+			}
 			return nil, err
 		}
 		saved = append(saved, *s)

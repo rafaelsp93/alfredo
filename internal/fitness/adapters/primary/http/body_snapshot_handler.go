@@ -67,7 +67,7 @@ func (h *BodySnapshotHandler) CreateSnapshot(c echo.Context) error {
 }
 
 func (h *BodySnapshotHandler) ListSnapshots(c echo.Context) error {
-	from, to := parseDateRangeParams(c)
+	from, to := parseDateOnlyParams(c)
 	snapshots, err := h.svc.ListSnapshots(c.Request().Context(), from, to)
 	if err != nil {
 		return mapError(c, err)
@@ -101,6 +101,22 @@ func (h *BodySnapshotHandler) DeleteSnapshot(c echo.Context) error {
 	}
 	logger.FromEcho(c).Info("body snapshot deleted", zap.String("snapshot_id", id))
 	return c.NoContent(http.StatusNoContent)
+}
+
+// parseDateOnlyParams reads optional ?from= and ?to= query params as YYYY-MM-DD date strings.
+func parseDateOnlyParams(c echo.Context) (*time.Time, *time.Time) {
+	var from, to *time.Time
+	if s := c.QueryParam("from"); s != "" {
+		if t, err := time.Parse("2006-01-02", s); err == nil {
+			from = &t
+		}
+	}
+	if s := c.QueryParam("to"); s != "" {
+		if t, err := time.Parse("2006-01-02", s); err == nil {
+			to = &t
+		}
+	}
+	return from, to
 }
 
 // --- response types ---
