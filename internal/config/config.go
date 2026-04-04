@@ -44,6 +44,7 @@ func Load() (*Config, error) {
 	v.SetDefault("server.port", 8080)
 	v.SetDefault("database.path", "./data/alfredo.db")
 	v.SetDefault("webhook.base_url", "")
+	v.SetDefault("webhook.api_key", "")
 	v.SetDefault("auth.api_key", "")
 	v.SetDefault("log.level", "info")
 
