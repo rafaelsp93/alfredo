@@ -18,12 +18,13 @@ import (
 
 	"github.com/rafaelsoares/alfredo/internal/app"
 	"github.com/rafaelsoares/alfredo/internal/config"
+	"github.com/rafaelsoares/alfredo/internal/database"
 	fitnesshttp "github.com/rafaelsoares/alfredo/internal/fitness/adapters/primary/http"
 	fitnesssqlite "github.com/rafaelsoares/alfredo/internal/fitness/adapters/secondary/sqlite"
 	fitnesssvc "github.com/rafaelsoares/alfredo/internal/fitness/service"
 	pethttp "github.com/rafaelsoares/alfredo/internal/petcare/adapters/primary/http"
 	petmw "github.com/rafaelsoares/alfredo/internal/petcare/adapters/primary/http/middleware"
-	"github.com/rafaelsoares/alfredo/internal/petcare/adapters/secondary/sqlite"
+	petcaresqlite "github.com/rafaelsoares/alfredo/internal/petcare/adapters/secondary/sqlite"
 	petsvc "github.com/rafaelsoares/alfredo/internal/petcare/service"
 	"github.com/rafaelsoares/alfredo/internal/webhook"
 )
@@ -58,28 +59,23 @@ func main() {
 	}
 	defer zapLogger.Sync() //nolint:errcheck
 
-	// 4. Open SQLite (runs migration 001)
-	db, err := sqlite.Open(cfg.Database.Path)
+	// 4. Open SQLite (runs all migrations)
+	db, err := database.Open(cfg.Database.Path)
 	if err != nil {
 		zapLogger.Fatal("sqlite open failed", zap.Error(err))
 	}
 	defer db.Close() //nolint:errcheck
-
-	// 4a. Run fitness migrations
-	if err := fitnesssqlite.Migrate(db); err != nil {
-		zapLogger.Fatal("fitness migrate failed", zap.Error(err))
-	}
 
 	// 5. Webhook emitter (no-op when URL is empty)
 	emitter := webhook.New(cfg.Webhook.BaseURL, cfg.Webhook.APIKey, "petcare", zapLogger)
 	fitnessEmitter := webhook.New(cfg.Webhook.BaseURL, cfg.Webhook.APIKey, "fitness", zapLogger)
 
 	// 6. Pet-care repositories
-	petRepo := sqlite.NewPetRepository(db)
-	vaccineRepo := sqlite.NewVaccineRepository(db)
-	treatmentRepo := sqlite.NewTreatmentRepository(db)
-	doseRepo := sqlite.NewDoseRepository(db)
-	dbChecker := sqlite.NewChecker(db)
+	petRepo := petcaresqlite.NewPetRepository(db)
+	vaccineRepo := petcaresqlite.NewVaccineRepository(db)
+	treatmentRepo := petcaresqlite.NewTreatmentRepository(db)
+	doseRepo := petcaresqlite.NewDoseRepository(db)
+	dbChecker := database.NewChecker(db)
 
 	// 6a. Fitness repositories
 	fitnessProfileRepo := fitnesssqlite.NewProfileRepository(db)
