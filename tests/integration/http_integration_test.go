@@ -96,6 +96,7 @@ type recordingCalendar struct {
 	failCreateCalendar       error
 	failDeleteCalendar       error
 	failCreateEvent          error
+	failCreateEventCall      int
 	failCreateRecurringEvent error
 	failStopRecurringEvent   error
 	failDeleteEvent          error
@@ -134,7 +135,8 @@ func (c *recordingCalendar) DeleteCalendar(_ context.Context, calendarID string)
 func (c *recordingCalendar) CreateEvent(_ context.Context, calendarID string, event gcalendar.Event) (string, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.failCreateEvent != nil {
+	call := c.nextEventID + 1
+	if c.failCreateEvent != nil && (c.failCreateEventCall == 0 || c.failCreateEventCall == call) {
 		return "", c.failCreateEvent
 	}
 	c.nextEventID++
@@ -314,6 +316,7 @@ func TestVaccineLifecyclePersistsFieldsAndCalendarSideEffects(t *testing.T) {
 	requireEqual(t, "B-123", row.BatchNumber.String, "db vaccine batch")
 	requireEqual(t, "left shoulder", row.Notes.String, "db vaccine notes")
 	requireEqual(t, "evt-01", row.GoogleCalendarEventID, "db vaccine event id")
+	requireEqual(t, "", row.GoogleCalendarNextDueEventID, "db vaccine next due event id")
 
 	rec = fx.doJSON(http.MethodPost, "/api/v1/pets/"+pet.ID+"/vaccines", map[string]any{
 		"name":            "V10",
@@ -325,9 +328,18 @@ func TestVaccineLifecyclePersistsFieldsAndCalendarSideEffects(t *testing.T) {
 	decodeJSON(t, rec, &recurring)
 	requireEqual(t, "2027-06-01", *recurring.NextDueAt, "recurring vaccine next due")
 	requireEqual(t, "evt-02", recurring.GoogleCalendarEventID, "recurring vaccine event id")
-	requireEqual(t, 2, len(fx.calendar.createdEvents), "vaccine event count after recurrence")
-	requireEqual(t, 7*24*60, fx.calendar.createdEvents[1].Event.ReminderMin, "recurring vaccine reminder")
-	requireEqual(t, "V10", fx.calendar.createdEvents[1].Event.Title, "recurring vaccine event title")
+	requireEqual(t, "evt-03", recurring.GoogleCalendarNextDueEventID, "recurring vaccine next due event id")
+	requireEqual(t, 3, len(fx.calendar.createdEvents), "vaccine event count after recurrence")
+	requireEqual(t, 0, fx.calendar.createdEvents[1].Event.ReminderMin, "recurring vaccine administered reminder")
+	requireEqual(t, "V10", fx.calendar.createdEvents[1].Event.Title, "recurring vaccine administered title")
+	requireEqual(t, "2026-06-01T08:00:00-03:00", fx.calendar.createdEvents[1].Event.StartTime.Format(time.RFC3339), "recurring vaccine administered event time")
+	requireEqual(t, 7*24*60, fx.calendar.createdEvents[2].Event.ReminderMin, "recurring vaccine next due reminder")
+	requireEqual(t, "Next due: V10", fx.calendar.createdEvents[2].Event.Title, "recurring vaccine next due event title")
+	requireEqual(t, "2027-06-01T08:00:00-03:00", fx.calendar.createdEvents[2].Event.StartTime.Format(time.RFC3339), "recurring vaccine next due event time")
+
+	recurringRow := queryVaccine(t, fx.db, recurring.ID)
+	requireEqual(t, "evt-02", recurringRow.GoogleCalendarEventID, "db recurring vaccine event id")
+	requireEqual(t, "evt-03", recurringRow.GoogleCalendarNextDueEventID, "db recurring vaccine next due event id")
 
 	rec = fx.doJSON(http.MethodGet, "/api/v1/pets/"+pet.ID+"/vaccines", nil, "bearer")
 	requireStatus(t, rec, http.StatusOK)
@@ -341,6 +353,13 @@ func TestVaccineLifecyclePersistsFieldsAndCalendarSideEffects(t *testing.T) {
 	requireEqual(t, "cal-01", fx.calendar.deletedEvents[0].CalendarID, "deleted vaccine event calendar id")
 	requireEqual(t, "evt-01", fx.calendar.deletedEvents[0].EventID, "deleted vaccine event id")
 	requireEqual(t, 1, countRows(t, fx.db, "vaccines"), "vaccine rows after delete")
+
+	rec = fx.doJSON(http.MethodDelete, "/api/v1/pets/"+pet.ID+"/vaccines/"+recurring.ID, nil, "bearer")
+	requireStatus(t, rec, http.StatusNoContent)
+	requireEqual(t, 3, len(fx.calendar.deletedEvents), "deleted vaccine events after recurring delete")
+	requireEqual(t, "evt-02", fx.calendar.deletedEvents[1].EventID, "deleted recurring administered event id")
+	requireEqual(t, "evt-03", fx.calendar.deletedEvents[2].EventID, "deleted recurring next due event id")
+	requireEqual(t, 0, countRows(t, fx.db, "vaccines"), "vaccine rows after recurring delete")
 }
 
 func TestVaccineFailuresAndValidationPreserveState(t *testing.T) {
@@ -363,6 +382,21 @@ func TestVaccineFailuresAndValidationPreserveState(t *testing.T) {
 	}, "bearer")
 	requireStatus(t, rec, http.StatusInternalServerError)
 	requireEqual(t, 0, countRows(t, fx.db, "vaccines"), "vaccine rows after calendar create failure")
+
+	fx = newFixture(t)
+	pet = fx.createPet(map[string]any{"name": "Luna", "species": "dog"})
+	fx.calendar.failCreateEvent = errors.New("next due calendar event failed")
+	fx.calendar.failCreateEventCall = 2
+	rec = fx.doJSON(http.MethodPost, "/api/v1/pets/"+pet.ID+"/vaccines", map[string]any{
+		"name":            "V10",
+		"date":            "2026-06-01T08:00:00-03:00",
+		"recurrence_days": 365,
+	}, "bearer")
+	requireStatus(t, rec, http.StatusInternalServerError)
+	requireEqual(t, 0, countRows(t, fx.db, "vaccines"), "vaccine rows after next due calendar create failure")
+	requireEqual(t, 1, len(fx.calendar.createdEvents), "created administered event before next due failure")
+	requireEqual(t, 1, len(fx.calendar.deletedEvents), "compensated administered event after next due failure")
+	requireEqual(t, "evt-01", fx.calendar.deletedEvents[0].EventID, "compensated administered event id")
 
 	fx = newFixture(t)
 	pet = fx.createPet(map[string]any{"name": "Luna", "species": "dog"})
@@ -621,15 +655,16 @@ type petResponse struct {
 }
 
 type vaccineResponse struct {
-	ID                    string  `json:"id"`
-	PetID                 string  `json:"pet_id"`
-	Name                  string  `json:"name"`
-	Date                  string  `json:"date"`
-	NextDueAt             *string `json:"next_due_at"`
-	VetName               *string `json:"vet_name"`
-	BatchNumber           *string `json:"batch_number"`
-	Notes                 *string `json:"notes"`
-	GoogleCalendarEventID string  `json:"google_calendar_event_id"`
+	ID                           string  `json:"id"`
+	PetID                        string  `json:"pet_id"`
+	Name                         string  `json:"name"`
+	Date                         string  `json:"date"`
+	NextDueAt                    *string `json:"next_due_at"`
+	VetName                      *string `json:"vet_name"`
+	BatchNumber                  *string `json:"batch_number"`
+	Notes                        *string `json:"notes"`
+	GoogleCalendarEventID        string  `json:"google_calendar_event_id"`
+	GoogleCalendarNextDueEventID string  `json:"google_calendar_next_due_event_id"`
 }
 
 type doseResponse struct {
@@ -670,15 +705,16 @@ type petRow struct {
 }
 
 type vaccineRow struct {
-	ID                    string
-	PetID                 string
-	Name                  string
-	AdministeredAt        string
-	NextDueAt             sql.NullString
-	VetName               sql.NullString
-	BatchNumber           sql.NullString
-	Notes                 sql.NullString
-	GoogleCalendarEventID string
+	ID                           string
+	PetID                        string
+	Name                         string
+	AdministeredAt               string
+	NextDueAt                    sql.NullString
+	VetName                      sql.NullString
+	BatchNumber                  sql.NullString
+	Notes                        sql.NullString
+	GoogleCalendarEventID        string
+	GoogleCalendarNextDueEventID string
 }
 
 type treatmentRow struct {
@@ -715,9 +751,9 @@ func queryVaccine(t *testing.T, db *sql.DB, id string) vaccineRow {
 	t.Helper()
 	var row vaccineRow
 	err := db.QueryRow(`
-		SELECT id, pet_id, name, administered_at, next_due_at, vet_name, batch_number, notes, google_calendar_event_id
+		SELECT id, pet_id, name, administered_at, next_due_at, vet_name, batch_number, notes, google_calendar_event_id, google_calendar_next_due_event_id
 		FROM vaccines WHERE id = ?`, id,
-	).Scan(&row.ID, &row.PetID, &row.Name, &row.AdministeredAt, &row.NextDueAt, &row.VetName, &row.BatchNumber, &row.Notes, &row.GoogleCalendarEventID)
+	).Scan(&row.ID, &row.PetID, &row.Name, &row.AdministeredAt, &row.NextDueAt, &row.VetName, &row.BatchNumber, &row.Notes, &row.GoogleCalendarEventID, &row.GoogleCalendarNextDueEventID)
 	if err != nil {
 		t.Fatalf("query vaccine %q: %v", id, err)
 	}
