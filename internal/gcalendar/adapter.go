@@ -156,7 +156,6 @@ func toGoogleEvent(event Event, intervalHours int) (*calendar.Event, error) {
 	gEvent := &calendar.Event{
 		Summary:     event.Title,
 		Description: event.Description,
-		Location:    event.Location,
 		Start: &calendar.EventDateTime{
 			DateTime: event.StartTime.Format(time.RFC3339),
 			TimeZone: event.TimeZone,
@@ -172,6 +171,9 @@ func toGoogleEvent(event Event, intervalHours int) (*calendar.Event, error) {
 				{Method: "popup", Minutes: int64(event.ReminderMin), ForceSendFields: []string{"Minutes"}},
 			},
 		},
+	}
+	if event.Location != "" {
+		gEvent.Location = event.Location
 	}
 	if intervalHours > 0 {
 		gEvent.Recurrence = []string{fmt.Sprintf("RRULE:FREQ=HOURLY;INTERVAL=%d", intervalHours)}
