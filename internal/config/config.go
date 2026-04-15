@@ -15,9 +15,14 @@ type DatabaseConfig struct {
 	Path string `mapstructure:"path"`
 }
 
-type WebhookConfig struct {
-	BaseURL string `mapstructure:"base_url"`
-	APIKey  string `mapstructure:"api_key"`
+type GCalendarConfig struct {
+	ClientID     string `mapstructure:"client_id"`
+	ClientSecret string `mapstructure:"client_secret"`
+	RefreshToken string `mapstructure:"refresh_token"`
+}
+
+type AppConfig struct {
+	Timezone string `mapstructure:"timezone"`
 }
 
 type AuthConfig struct {
@@ -29,11 +34,12 @@ type LogConfig struct {
 }
 
 type Config struct {
-	Server   ServerConfig   `mapstructure:"server"`
-	Database DatabaseConfig `mapstructure:"database"`
-	Webhook  WebhookConfig  `mapstructure:"webhook"`
-	Auth     AuthConfig     `mapstructure:"auth"`
-	Log      LogConfig      `mapstructure:"log"`
+	Server    ServerConfig    `mapstructure:"server"`
+	Database  DatabaseConfig  `mapstructure:"database"`
+	GCalendar GCalendarConfig `mapstructure:"gcalendar"`
+	App       AppConfig       `mapstructure:"app"`
+	Auth      AuthConfig      `mapstructure:"auth"`
+	Log       LogConfig       `mapstructure:"log"`
 }
 
 // Load reads configuration from config.yaml (optional) and APP_* environment variables.
@@ -43,8 +49,10 @@ func Load() (*Config, error) {
 	v.SetDefault("server.host", "0.0.0.0")
 	v.SetDefault("server.port", 8080)
 	v.SetDefault("database.path", "./data/alfredo.db")
-	v.SetDefault("webhook.base_url", "")
-	v.SetDefault("webhook.api_key", "")
+	v.SetDefault("gcalendar.client_id", "")
+	v.SetDefault("gcalendar.client_secret", "")
+	v.SetDefault("gcalendar.refresh_token", "")
+	v.SetDefault("app.timezone", "America/Sao_Paulo")
 	v.SetDefault("auth.api_key", "")
 	v.SetDefault("log.level", "info")
 

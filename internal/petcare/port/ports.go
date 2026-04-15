@@ -36,10 +36,6 @@ type TreatmentRepository interface {
 type DoseRepository interface {
 	CreateBatch(ctx context.Context, doses []domain.Dose) error
 	ListByTreatment(ctx context.Context, treatmentID string) ([]domain.Dose, error)
-	// DeleteFutureDoses deletes doses scheduled after `after` and returns their IDs.
-	DeleteFutureDoses(ctx context.Context, treatmentID string, after time.Time) ([]string, error)
-	// ListOpenEndedActiveTreatments returns treatments with ended_at IS NULL AND stopped_at IS NULL.
-	ListOpenEndedActiveTreatments(ctx context.Context) ([]domain.Treatment, error)
-	// LatestDoseFor returns the latest scheduled dose for a treatment, or nil if none exist.
-	LatestDoseFor(ctx context.Context, treatmentID string) (*domain.Dose, error)
+	ListFutureByTreatment(ctx context.Context, treatmentID string, after time.Time) ([]domain.Dose, error)
+	DeleteFutureByTreatment(ctx context.Context, treatmentID string, after time.Time) error
 }

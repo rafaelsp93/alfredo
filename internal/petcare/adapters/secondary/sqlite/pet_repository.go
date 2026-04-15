@@ -10,16 +10,17 @@ import (
 	"github.com/rafaelsoares/alfredo/internal/petcare/domain"
 )
 
-type PetRepository struct{ db *sql.DB }
+type PetRepository struct{ db dbtx }
 
-func NewPetRepository(db *sql.DB) *PetRepository { return &PetRepository{db: db} }
+func NewPetRepository(db dbtx) *PetRepository { return &PetRepository{db: db} }
 
 func (r *PetRepository) Create(ctx context.Context, p domain.Pet) (*domain.Pet, error) {
 	_, err := r.db.ExecContext(ctx, `
-		INSERT INTO pets (id, name, species, breed, birth_date, weight_kg, daily_food_grams, photo_path, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		INSERT INTO pets (id, name, species, breed, birth_date, weight_kg, daily_food_grams, photo_path, google_calendar_id, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		p.ID, p.Name, p.Species,
 		p.Breed, formatDate(p.BirthDate), p.WeightKg, p.DailyFoodGrams, p.PhotoPath,
+		p.GoogleCalendarID,
 		p.CreatedAt.Format(time.RFC3339),
 	)
 	if err != nil {
@@ -29,7 +30,7 @@ func (r *PetRepository) Create(ctx context.Context, p domain.Pet) (*domain.Pet, 
 }
 
 func (r *PetRepository) GetByID(ctx context.Context, id string) (*domain.Pet, error) {
-	row := r.db.QueryRowContext(ctx, `SELECT id, name, species, breed, birth_date, weight_kg, daily_food_grams, photo_path, created_at FROM pets WHERE id = ?`, id)
+	row := r.db.QueryRowContext(ctx, `SELECT id, name, species, breed, birth_date, weight_kg, daily_food_grams, photo_path, google_calendar_id, created_at FROM pets WHERE id = ?`, id)
 	p, err := scanPet(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, domain.ErrNotFound
@@ -38,7 +39,7 @@ func (r *PetRepository) GetByID(ctx context.Context, id string) (*domain.Pet, er
 }
 
 func (r *PetRepository) List(ctx context.Context) ([]domain.Pet, error) {
-	rows, err := r.db.QueryContext(ctx, `SELECT id, name, species, breed, birth_date, weight_kg, daily_food_grams, photo_path, created_at FROM pets ORDER BY created_at`)
+	rows, err := r.db.QueryContext(ctx, `SELECT id, name, species, breed, birth_date, weight_kg, daily_food_grams, photo_path, google_calendar_id, created_at FROM pets ORDER BY created_at`)
 	if err != nil {
 		return nil, err
 	}
@@ -57,9 +58,9 @@ func (r *PetRepository) List(ctx context.Context) ([]domain.Pet, error) {
 
 func (r *PetRepository) Update(ctx context.Context, p domain.Pet) (*domain.Pet, error) {
 	res, err := r.db.ExecContext(ctx, `
-		UPDATE pets SET name=?, species=?, breed=?, birth_date=?, weight_kg=?, daily_food_grams=?, photo_path=?
+		UPDATE pets SET name=?, species=?, breed=?, birth_date=?, weight_kg=?, daily_food_grams=?, photo_path=?, google_calendar_id=?
 		WHERE id=?`,
-		p.Name, p.Species, p.Breed, formatDate(p.BirthDate), p.WeightKg, p.DailyFoodGrams, p.PhotoPath, p.ID,
+		p.Name, p.Species, p.Breed, formatDate(p.BirthDate), p.WeightKg, p.DailyFoodGrams, p.PhotoPath, p.GoogleCalendarID, p.ID,
 	)
 	if err != nil {
 		return nil, err
@@ -91,7 +92,7 @@ func scanPet(s scanner) (*domain.Pet, error) {
 	var p domain.Pet
 	var birthDate sql.NullString
 	var createdAt string
-	err := s.Scan(&p.ID, &p.Name, &p.Species, &p.Breed, &birthDate, &p.WeightKg, &p.DailyFoodGrams, &p.PhotoPath, &createdAt)
+	err := s.Scan(&p.ID, &p.Name, &p.Species, &p.Breed, &birthDate, &p.WeightKg, &p.DailyFoodGrams, &p.PhotoPath, &p.GoogleCalendarID, &createdAt)
 	if err != nil {
 		return nil, err
 	}

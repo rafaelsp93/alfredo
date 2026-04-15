@@ -11,13 +11,14 @@ import (
 )
 
 type CreatePetInput struct {
-	Name           string
-	Species        string
-	Breed          *string
-	BirthDate      *time.Time
-	WeightKg       *float64
-	DailyFoodGrams *float64
-	PhotoPath      *string
+	Name             string
+	Species          string
+	Breed            *string
+	BirthDate        *time.Time
+	WeightKg         *float64
+	DailyFoodGrams   *float64
+	PhotoPath        *string
+	GoogleCalendarID string
 }
 
 type UpdatePetInput struct {
@@ -50,15 +51,16 @@ func (s *PetService) Create(ctx context.Context, in CreatePetInput) (*domain.Pet
 		return nil, fmt.Errorf("%w: species is required", domain.ErrValidation)
 	}
 	pet := domain.Pet{
-		ID:             uuid.New().String(),
-		Name:           in.Name,
-		Species:        in.Species,
-		Breed:          in.Breed,
-		BirthDate:      in.BirthDate,
-		WeightKg:       in.WeightKg,
-		DailyFoodGrams: in.DailyFoodGrams,
-		PhotoPath:      in.PhotoPath,
-		CreatedAt:      time.Now().UTC(),
+		ID:               uuid.New().String(),
+		Name:             in.Name,
+		Species:          in.Species,
+		Breed:            in.Breed,
+		BirthDate:        in.BirthDate,
+		WeightKg:         in.WeightKg,
+		DailyFoodGrams:   in.DailyFoodGrams,
+		PhotoPath:        in.PhotoPath,
+		GoogleCalendarID: in.GoogleCalendarID,
+		CreatedAt:        time.Now().UTC(),
 	}
 	created, err := s.repo.Create(ctx, pet)
 	if err != nil {

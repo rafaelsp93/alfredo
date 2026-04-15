@@ -11,19 +11,19 @@ import (
 	"github.com/rafaelsoares/alfredo/internal/petcare/domain"
 )
 
-type TreatmentRepository struct{ db *sql.DB }
+type TreatmentRepository struct{ db dbtx }
 
-func NewTreatmentRepository(db *sql.DB) *TreatmentRepository {
+func NewTreatmentRepository(db dbtx) *TreatmentRepository {
 	return &TreatmentRepository{db: db}
 }
 
 func (r *TreatmentRepository) Create(ctx context.Context, t domain.Treatment) (*domain.Treatment, error) {
 	_, err := r.db.ExecContext(ctx,
-		`INSERT INTO treatments (id, pet_id, name, dosage_amount, dosage_unit, route, interval_hours, started_at, ended_at, stopped_at, vet_name, notes, created_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO treatments (id, pet_id, name, dosage_amount, dosage_unit, route, interval_hours, started_at, ended_at, stopped_at, vet_name, notes, google_calendar_event_id, created_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		t.ID, t.PetID, t.Name, t.DosageAmount, t.DosageUnit, t.Route, t.IntervalHours,
 		t.StartedAt.Format(time.RFC3339), formatOptionalRFC3339(t.EndedAt), formatOptionalRFC3339(t.StoppedAt),
-		t.VetName, t.Notes, t.CreatedAt.Format(time.RFC3339),
+		t.VetName, t.Notes, t.GoogleCalendarEventID, t.CreatedAt.Format(time.RFC3339),
 	)
 	if err != nil {
 		return nil, err
@@ -34,6 +34,7 @@ func (r *TreatmentRepository) Create(ctx context.Context, t domain.Treatment) (*
 func (r *TreatmentRepository) GetByID(ctx context.Context, petID, treatmentID string) (*domain.Treatment, error) {
 	row := r.db.QueryRowContext(ctx,
 		`SELECT id, pet_id, name, dosage_amount, dosage_unit, route, interval_hours, started_at, ended_at, stopped_at, vet_name, notes, created_at
+		 , google_calendar_event_id
 		 FROM treatments WHERE id = ? AND pet_id = ?`, treatmentID, petID)
 	t, err := scanTreatment(row)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -45,6 +46,7 @@ func (r *TreatmentRepository) GetByID(ctx context.Context, petID, treatmentID st
 func (r *TreatmentRepository) List(ctx context.Context, petID string) ([]domain.Treatment, error) {
 	rows, err := r.db.QueryContext(ctx,
 		`SELECT id, pet_id, name, dosage_amount, dosage_unit, route, interval_hours, started_at, ended_at, stopped_at, vet_name, notes, created_at
+		 , google_calendar_event_id
 		 FROM treatments WHERE pet_id = ? ORDER BY created_at DESC`, petID)
 	if err != nil {
 		return nil, err
@@ -88,7 +90,7 @@ func scanTreatment(s scanner) (*domain.Treatment, error) {
 	var endedAt, stoppedAt sql.NullString
 	err := s.Scan(
 		&t.ID, &t.PetID, &t.Name, &t.DosageAmount, &t.DosageUnit, &t.Route, &t.IntervalHours,
-		&startedAt, &endedAt, &stoppedAt, &t.VetName, &t.Notes, &createdAt,
+		&startedAt, &endedAt, &stoppedAt, &t.VetName, &t.Notes, &createdAt, &t.GoogleCalendarEventID,
 	)
 	if err != nil {
 		return nil, err

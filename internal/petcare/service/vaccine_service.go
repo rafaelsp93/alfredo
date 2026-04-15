@@ -15,13 +15,13 @@ type RecordVaccineInput struct {
 	PetID          string
 	Name           string
 	AdministeredAt time.Time
-	// RecurrenceDays is set by the HTTP layer and consumed by VaccineUseCase to compute NextDueAt
-	// and include in the vaccine.taken webhook payload. VaccineService itself does not read this field.
-	RecurrenceDays *int
-	NextDueAt      *time.Time
-	VetName        *string
-	BatchNumber    *string
-	Notes          *string
+	// RecurrenceDays is set by the HTTP layer and consumed by VaccineUseCase to compute NextDueAt.
+	RecurrenceDays        *int
+	NextDueAt             *time.Time
+	VetName               *string
+	BatchNumber           *string
+	Notes                 *string
+	GoogleCalendarEventID string
 }
 
 type VaccineService struct {
@@ -37,6 +37,10 @@ func (s *VaccineService) ListVaccines(ctx context.Context, petID string) ([]doma
 	return s.repo.ListVaccines(ctx, petID)
 }
 
+func (s *VaccineService) GetVaccine(ctx context.Context, petID, vaccineID string) (*domain.Vaccine, error) {
+	return s.repo.GetVaccine(ctx, petID, vaccineID)
+}
+
 func (s *VaccineService) RecordVaccine(ctx context.Context, in RecordVaccineInput) (*domain.Vaccine, error) {
 	if in.Name == "" {
 		return nil, fmt.Errorf("%w: name is required", domain.ErrValidation)
@@ -45,14 +49,15 @@ func (s *VaccineService) RecordVaccine(ctx context.Context, in RecordVaccineInpu
 		return nil, fmt.Errorf("%w: administered_at is required", domain.ErrValidation)
 	}
 	v, err := s.repo.CreateVaccine(ctx, domain.Vaccine{
-		ID:             uuid.New().String(),
-		PetID:          in.PetID,
-		Name:           in.Name,
-		AdministeredAt: in.AdministeredAt,
-		NextDueAt:      in.NextDueAt,
-		VetName:        in.VetName,
-		BatchNumber:    in.BatchNumber,
-		Notes:          in.Notes,
+		ID:                    uuid.New().String(),
+		PetID:                 in.PetID,
+		Name:                  in.Name,
+		AdministeredAt:        in.AdministeredAt,
+		NextDueAt:             in.NextDueAt,
+		VetName:               in.VetName,
+		BatchNumber:           in.BatchNumber,
+		Notes:                 in.Notes,
+		GoogleCalendarEventID: in.GoogleCalendarEventID,
 	})
 	if err != nil {
 		return nil, err

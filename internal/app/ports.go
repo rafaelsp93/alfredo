@@ -2,12 +2,16 @@ package app
 
 import (
 	"context"
+	"errors"
 	"time"
 
+	"github.com/rafaelsoares/alfredo/internal/gcalendar"
 	"github.com/rafaelsoares/alfredo/internal/petcare/domain"
 	"github.com/rafaelsoares/alfredo/internal/petcare/service"
 	"github.com/rafaelsoares/alfredo/internal/shared/health"
 )
+
+var ErrTxCommit = errors.New("transaction commit failed")
 
 // PetNameGetter allows use cases to look up a pet's name for event payloads.
 // Satisfied by petcare/service.PetService.GetByID.
@@ -33,6 +37,7 @@ type PetCareServicer interface {
 type VaccineServicer interface {
 	ListVaccines(ctx context.Context, petID string) ([]domain.Vaccine, error)
 	RecordVaccine(ctx context.Context, in service.RecordVaccineInput) (*domain.Vaccine, error)
+	GetVaccine(ctx context.Context, petID, vaccineID string) (*domain.Vaccine, error)
 	DeleteVaccine(ctx context.Context, petID, vaccineID string) error
 }
 
@@ -47,13 +52,17 @@ type TreatmentServicer interface {
 	Stop(ctx context.Context, petID, treatmentID string) error
 }
 
-// DoseServicer is the narrow interface consumed by TreatmentUseCase and DoseExtender.
-// Satisfied by *service.DoseService.
+// DoseServicer is the narrow interface consumed by TreatmentUseCase.
 type DoseServicer interface {
 	GenerateDoses(t domain.Treatment, upTo time.Time) []domain.Dose
 	CreateBatch(ctx context.Context, doses []domain.Dose) error
 	ListByTreatment(ctx context.Context, treatmentID string) ([]domain.Dose, error)
-	DeleteFutureDoses(ctx context.Context, treatmentID string, after time.Time) ([]string, error)
-	ListOpenEndedActiveTreatments(ctx context.Context) ([]domain.Treatment, error)
-	ExtendOpenEnded(ctx context.Context, t domain.Treatment, windowEnd time.Time) ([]domain.Dose, error)
+	ListFutureByTreatment(ctx context.Context, treatmentID string, after time.Time) ([]domain.Dose, error)
+	DeleteFutureByTreatment(ctx context.Context, treatmentID string, after time.Time) error
+}
+
+type CalendarPort = gcalendar.Port
+
+type PetCareTxRunner interface {
+	WithinTx(ctx context.Context, fn func(pets *service.PetService, vaccines *service.VaccineService, treatments *service.TreatmentService, doses *service.DoseService) error) error
 }

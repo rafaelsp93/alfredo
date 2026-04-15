@@ -45,37 +45,10 @@ func (s *DoseService) ListByTreatment(ctx context.Context, treatmentID string) (
 }
 
 // DeleteFutureDoses deletes doses scheduled after `after` and returns their IDs.
-func (s *DoseService) DeleteFutureDoses(ctx context.Context, treatmentID string, after time.Time) ([]string, error) {
-	return s.repo.DeleteFutureDoses(ctx, treatmentID, after)
+func (s *DoseService) ListFutureByTreatment(ctx context.Context, treatmentID string, after time.Time) ([]domain.Dose, error) {
+	return s.repo.ListFutureByTreatment(ctx, treatmentID, after)
 }
 
-// ListOpenEndedActiveTreatments returns open-ended treatments that have not been stopped.
-func (s *DoseService) ListOpenEndedActiveTreatments(ctx context.Context) ([]domain.Treatment, error) {
-	return s.repo.ListOpenEndedActiveTreatments(ctx)
-}
-
-// ExtendOpenEnded generates doses from (latestDose + IntervalHours) up to windowEnd and persists them.
-// Returns the newly created doses (nil if nothing to add).
-func (s *DoseService) ExtendOpenEnded(ctx context.Context, t domain.Treatment, windowEnd time.Time) ([]domain.Dose, error) {
-	latest, err := s.repo.LatestDoseFor(ctx, t.ID)
-	if err != nil {
-		return nil, err
-	}
-	var from time.Time
-	if latest == nil {
-		from = t.StartedAt
-	} else {
-		from = latest.ScheduledFor.Add(time.Duration(t.IntervalHours) * time.Hour)
-	}
-	if !from.Before(windowEnd) {
-		return nil, nil
-	}
-	// Build a synthetic treatment starting from `from` to generate only the missing doses.
-	stub := t
-	stub.StartedAt = from
-	doses := s.GenerateDoses(stub, windowEnd)
-	if len(doses) == 0 {
-		return nil, nil
-	}
-	return doses, s.repo.CreateBatch(ctx, doses)
+func (s *DoseService) DeleteFutureByTreatment(ctx context.Context, treatmentID string, after time.Time) error {
+	return s.repo.DeleteFutureByTreatment(ctx, treatmentID, after)
 }
