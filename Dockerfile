@@ -1,6 +1,6 @@
 # Alfredo — modular monolith
-# NOTE: Calendar (EventKit) is macOS-only. In Linux containers, calendar
-# operations degrade gracefully — they log errors and the pet-care data still saves.
+# Runtime secrets such as Google Calendar and Telegram credentials are injected
+# via environment variables by Docker Compose or CI, never baked into the image.
 
 FROM golang:1.26-alpine AS builder
 

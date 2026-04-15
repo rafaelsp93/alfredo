@@ -13,6 +13,7 @@ import (
 	"github.com/rafaelsoares/alfredo/internal/petcare/domain"
 	"github.com/rafaelsoares/alfredo/internal/petcare/port"
 	"github.com/rafaelsoares/alfredo/internal/petcare/service"
+	"github.com/rafaelsoares/alfredo/internal/telegram"
 )
 
 type failTxRunner struct{ err error }
@@ -69,6 +70,16 @@ func (c *calendarFake) StopRecurringEvent(context.Context, string, string, time.
 func (c *calendarFake) DeleteEvent(_ context.Context, _ string, eventID string) error {
 	c.deletedEvents = append(c.deletedEvents, eventID)
 	return nil
+}
+
+type telegramFake struct {
+	messages []telegram.Message
+	err      error
+}
+
+func (t *telegramFake) Send(_ context.Context, msg telegram.Message) error {
+	t.messages = append(t.messages, msg)
+	return t.err
 }
 
 type petRepoStub struct {
@@ -158,7 +169,8 @@ func TestPetUseCaseCreateCompensatesCalendarOnTxError(t *testing.T) {
 func TestVaccineUseCaseCreateCompensatesEventOnTxError(t *testing.T) {
 	pet := &domain.Pet{ID: "p1", Name: "Luna", GoogleCalendarID: "cal-1"}
 	calendar := &calendarFake{createEventIDs: []string{"evt-1"}}
-	uc := app.NewVaccineUseCase(&stubVaccineService{}, &fakePetGetterWithCalendar{pet: pet}, failTxRunner{err: errors.New("db failed")}, calendar, "America/Sao_Paulo", zap.NewNop())
+	telegramRecorder := &telegramFake{}
+	uc := app.NewVaccineUseCase(&stubVaccineService{}, &fakePetGetterWithCalendar{pet: pet}, failTxRunner{err: errors.New("db failed")}, calendar, telegramRecorder, "America/Sao_Paulo", zap.NewNop())
 
 	_, err := uc.RecordVaccine(context.Background(), service.RecordVaccineInput{
 		PetID:          "p1",
@@ -170,6 +182,9 @@ func TestVaccineUseCaseCreateCompensatesEventOnTxError(t *testing.T) {
 	}
 	if len(calendar.deletedEvents) != 1 || calendar.deletedEvents[0] != "evt-1" {
 		t.Fatalf("unexpected event compensation: %#v", calendar.deletedEvents)
+	}
+	if len(telegramRecorder.messages) != 0 {
+		t.Fatalf("expected no telegram message on tx error, got %#v", telegramRecorder.messages)
 	}
 }
 
@@ -187,6 +202,7 @@ func TestVaccineUseCaseRecordsEventAtAdministeredTimeWhenRecurring(t *testing.T)
 			doseRepo:      &doseRepoStub{},
 		},
 		calendar,
+		&telegramFake{},
 		"America/Sao_Paulo",
 		zap.NewNop(),
 	)
@@ -250,6 +266,7 @@ func TestVaccineUseCaseDeleteRemovesAdministeredAndNextDueEvents(t *testing.T) {
 			doseRepo:      &doseRepoStub{},
 		},
 		calendar,
+		&telegramFake{},
 		"America/Sao_Paulo",
 		zap.NewNop(),
 	)
@@ -282,6 +299,7 @@ func TestTreatmentUseCaseCreateFiniteCompensatesCreatedEvents(t *testing.T) {
 			doseRepo:      doseRepo,
 		},
 		calendar,
+		&telegramFake{},
 		"America/Sao_Paulo",
 		zap.NewNop(),
 	)
@@ -322,6 +340,7 @@ func TestTreatmentUseCaseCreateRecurringStoresSeriesIDWithoutDoses(t *testing.T)
 			doseRepo:      doseRepo,
 		},
 		calendar,
+		&telegramFake{},
 		"America/Sao_Paulo",
 		zap.NewNop(),
 	)

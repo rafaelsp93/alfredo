@@ -22,6 +22,7 @@ import (
 type Config struct {
 	DB       *sql.DB
 	Calendar app.CalendarPort
+	Telegram app.TelegramPort
 	APIKey   string
 	Location *time.Location
 	Logger   *zap.Logger
@@ -33,6 +34,9 @@ func New(cfg Config) (*echo.Echo, error) {
 	}
 	if cfg.Calendar == nil {
 		return nil, fmt.Errorf("server calendar is required")
+	}
+	if cfg.Telegram == nil {
+		return nil, fmt.Errorf("server telegram is required")
 	}
 	if cfg.APIKey == "" {
 		return nil, fmt.Errorf("server api key is required")
@@ -57,8 +61,8 @@ func New(cfg Config) (*echo.Echo, error) {
 	doseService := petsvc.NewDoseService(doseRepo)
 
 	petUC := app.NewPetUseCase(petService, txRunner, cfg.Calendar, logger)
-	vaccineUC := app.NewVaccineUseCase(vaccineService, petService, txRunner, cfg.Calendar, cfg.Location.String(), logger)
-	treatmentUC := app.NewTreatmentUseCase(treatmentService, doseService, petService, txRunner, cfg.Calendar, cfg.Location.String(), logger)
+	vaccineUC := app.NewVaccineUseCase(vaccineService, petService, txRunner, cfg.Calendar, cfg.Telegram, cfg.Location.String(), logger)
+	treatmentUC := app.NewTreatmentUseCase(treatmentService, doseService, petService, txRunner, cfg.Calendar, cfg.Telegram, cfg.Location.String(), logger)
 
 	healthAgg := app.NewHealthAggregator(map[string]app.HealthPinger{
 		"sqlite": database.NewChecker(cfg.DB),

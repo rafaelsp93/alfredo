@@ -131,6 +131,8 @@ docker compose -f docker-compose.prod.yml up -d   # uses ghcr.io/rafaelsoares/al
 | `gcalendar.client_id` | `` | `APP_GCALENDAR_CLIENT_ID` |
 | `gcalendar.client_secret` | `` | `APP_GCALENDAR_CLIENT_SECRET` |
 | `gcalendar.refresh_token` | `` | `APP_GCALENDAR_REFRESH_TOKEN` |
+| `telegram.bot_token` | `` | `APP_TELEGRAM_BOT_TOKEN` |
+| `telegram.chat_id` | `` | `APP_TELEGRAM_CHAT_ID` |
 | `auth.api_key` | `` | `APP_AUTH_API_KEY` |
 | `log.level` | `info` | `APP_LOG_LEVEL` |
 
@@ -161,3 +163,16 @@ date-only.
 | Finite treatment stopped | `DELETE /api/v1/pets/:id/treatments/:tid` | Delete future dose events |
 | Ongoing treatment started | `POST /api/v1/pets/:id/treatments` without `ended_at` | Create recurring event series |
 | Ongoing treatment stopped | `DELETE /api/v1/pets/:id/treatments/:tid` | Stop recurring event series |
+
+## Telegram Integration
+
+Alfredo sends pet-care notifications directly to Telegram. Set `APP_TELEGRAM_BOT_TOKEN` and
+`APP_TELEGRAM_CHAT_ID` to enable the real Bot API adapter. When either value is empty, Alfredo
+uses the no-op adapter for local development and logs calls with `"telegram noop"`.
+
+Telegram notifications are best-effort: failures are logged and swallowed, and the pet-care write
+still succeeds. This is deliberately different from Google Calendar because Telegram does not store
+integration state that Alfredo must preserve.
+
+Messages are Portuguese, HTML-formatted, and sent for vaccine and treatment create/delete flows.
+Pet create/delete does not send Telegram notifications.

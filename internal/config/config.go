@@ -21,6 +21,11 @@ type GCalendarConfig struct {
 	RefreshToken string `mapstructure:"refresh_token"`
 }
 
+type TelegramConfig struct {
+	BotToken string `mapstructure:"bot_token"`
+	ChatID   string `mapstructure:"chat_id"`
+}
+
 type AppConfig struct {
 	Timezone string `mapstructure:"timezone"`
 }
@@ -37,6 +42,7 @@ type Config struct {
 	Server    ServerConfig    `mapstructure:"server"`
 	Database  DatabaseConfig  `mapstructure:"database"`
 	GCalendar GCalendarConfig `mapstructure:"gcalendar"`
+	Telegram  TelegramConfig  `mapstructure:"telegram"`
 	App       AppConfig       `mapstructure:"app"`
 	Auth      AuthConfig      `mapstructure:"auth"`
 	Log       LogConfig       `mapstructure:"log"`
@@ -52,6 +58,8 @@ func Load() (*Config, error) {
 	v.SetDefault("gcalendar.client_id", "")
 	v.SetDefault("gcalendar.client_secret", "")
 	v.SetDefault("gcalendar.refresh_token", "")
+	v.SetDefault("telegram.bot_token", "")
+	v.SetDefault("telegram.chat_id", "")
 	v.SetDefault("app.timezone", "America/Sao_Paulo")
 	v.SetDefault("auth.api_key", "")
 	v.SetDefault("log.level", "info")

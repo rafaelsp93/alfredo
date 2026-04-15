@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
+	"strings"
 	"time"
 
 	"go.uber.org/zap"
@@ -11,6 +13,7 @@ import (
 	"github.com/rafaelsoares/alfredo/internal/gcalendar"
 	"github.com/rafaelsoares/alfredo/internal/petcare/domain"
 	"github.com/rafaelsoares/alfredo/internal/petcare/service"
+	"github.com/rafaelsoares/alfredo/internal/telegram"
 )
 
 // TreatmentUseCase orchestrates treatment creation, dose generation, and calendar side effects.
@@ -20,6 +23,7 @@ type TreatmentUseCase struct {
 	pets       PetNameGetter
 	txRunner   PetCareTxRunner
 	calendar   CalendarPort
+	telegram   TelegramPort
 	timezone   string
 	logger     *zap.Logger
 }
@@ -30,13 +34,14 @@ func NewTreatmentUseCase(
 	pets PetNameGetter,
 	txRunner PetCareTxRunner,
 	calendar CalendarPort,
+	telegramPort TelegramPort,
 	timezone string,
 	logger *zap.Logger,
 ) *TreatmentUseCase {
 	if logger == nil {
 		logger = zap.NewNop()
 	}
-	return &TreatmentUseCase{treatments: treatments, doses: doses, pets: pets, txRunner: txRunner, calendar: calendar, timezone: timezone, logger: logger}
+	return &TreatmentUseCase{treatments: treatments, doses: doses, pets: pets, txRunner: txRunner, calendar: calendar, telegram: telegramPort, timezone: timezone, logger: logger}
 }
 
 // Create starts a treatment and creates the corresponding calendar state.
@@ -89,6 +94,7 @@ func (uc *TreatmentUseCase) Create(ctx context.Context, in service.CreateTreatme
 		uc.compensateEvents(ctx, pet.GoogleCalendarID, createdEventIDs, tr)
 		return nil, nil, err
 	}
+	uc.sendTelegram(ctx, formatTreatmentCreatedMessage(pet, tr, doses, uc.timezone), zap.String("pet_id", pet.ID), zap.String("treatment_id", tr.ID))
 	return tr, doses, nil
 }
 
@@ -156,6 +162,7 @@ func (uc *TreatmentUseCase) createRecurringTreatment(ctx context.Context, pet *d
 		}
 		return nil, nil, err
 	}
+	uc.sendTelegram(ctx, formatTreatmentCreatedMessage(pet, treatment, nil, uc.timezone), zap.String("pet_id", pet.ID), zap.String("treatment_id", treatment.ID))
 	return treatment, nil, nil
 }
 
@@ -164,6 +171,8 @@ func (uc *TreatmentUseCase) Stop(ctx context.Context, petID, treatmentID string)
 	var (
 		pet             *domain.Pet
 		tr              *domain.Treatment
+		allDoses        []domain.Dose
+		futureDoses     []domain.Dose
 		externalChanged bool
 	)
 	now := time.Now().UTC()
@@ -192,7 +201,11 @@ func (uc *TreatmentUseCase) Stop(ctx context.Context, petID, treatmentID string)
 			return nil
 		}
 
-		futureDoses, err := doses.ListFutureByTreatment(ctx, treatmentID, now)
+		allDoses, err = doses.ListByTreatment(ctx, treatmentID)
+		if err != nil {
+			return fmt.Errorf("list doses for treatment %q: %w", treatmentID, err)
+		}
+		futureDoses, err = doses.ListFutureByTreatment(ctx, treatmentID, now)
 		if err != nil {
 			return fmt.Errorf("list future doses for treatment %q: %w", treatmentID, err)
 		}
@@ -222,6 +235,9 @@ func (uc *TreatmentUseCase) Stop(ctx context.Context, petID, treatmentID string)
 			zap.Error(err),
 		)
 	}
+	if err == nil {
+		uc.sendTelegram(ctx, formatTreatmentStoppedMessage(pet, tr, allDoses, futureDoses, now, uc.timezone), zap.String("pet_id", petID), zap.String("treatment_id", treatmentID))
+	}
 	return err
 }
 
@@ -239,4 +255,89 @@ func (uc *TreatmentUseCase) compensateEvents(ctx context.Context, calendarID str
 			uc.logger.Error("calendar compensation failed after treatment create error", fields...)
 		}
 	}
+}
+
+func (uc *TreatmentUseCase) sendTelegram(ctx context.Context, msg telegram.Message, fields ...zap.Field) {
+	if uc.telegram == nil {
+		return
+	}
+	if err := uc.telegram.Send(ctx, msg); err != nil {
+		allFields := append([]zap.Field{zap.Error(err)}, fields...)
+		uc.logger.Warn("telegram notification failed", allFields...)
+	}
+}
+
+func formatTreatmentCreatedMessage(pet *domain.Pet, treatment *domain.Treatment, doses []domain.Dose, timezone string) telegram.Message {
+	var b strings.Builder
+	if treatment.EndedAt == nil {
+		b.WriteString("<b>💊 Tratamento contínuo registrado</b>\n\n")
+	} else {
+		b.WriteString("<b>💊 Tratamento registrado</b>\n\n")
+	}
+	writeTreatmentBase(&b, pet, treatment, timezone)
+	if treatment.EndedAt == nil {
+		writeRawHTMLLine(&b, "Fim previsto", "sem data definida")
+	} else {
+		writeHTMLLine(&b, "Fim previsto", formatUserTime(*treatment.EndedAt, timezone))
+		writeRawHTMLLine(&b, "Doses agendadas", strconv.Itoa(len(doses)))
+	}
+	writeOptionalTreatmentDetails(&b, treatment)
+	return telegram.Message{Text: b.String(), ParseMode: telegram.ParseModeHTML}
+}
+
+func formatTreatmentStoppedMessage(pet *domain.Pet, treatment *domain.Treatment, allDoses []domain.Dose, futureDoses []domain.Dose, stoppedAt time.Time, timezone string) telegram.Message {
+	var b strings.Builder
+	if treatment.EndedAt == nil {
+		b.WriteString("<b>⛔ Tratamento contínuo interrompido</b>\n\n")
+		writeHTMLLine(&b, "Pet", pet.Name)
+		writeHTMLLine(&b, "Tratamento", treatment.Name)
+		writeHTMLLine(&b, "Interrompido em", formatUserTime(stoppedAt, timezone))
+		writeRawHTMLLine(&b, "Série recorrente", "encerrada no calendário")
+		return telegram.Message{Text: b.String(), ParseMode: telegram.ParseModeHTML}
+	}
+
+	futureDeleted := len(futureDoses)
+	alreadyOccurred := len(allDoses) - futureDeleted
+	if alreadyOccurred < 0 {
+		alreadyOccurred = 0
+	}
+
+	b.WriteString("<b>⛔ Tratamento interrompido</b>\n\n")
+	writeHTMLLine(&b, "Pet", pet.Name)
+	writeHTMLLine(&b, "Tratamento", treatment.Name)
+	writeHTMLLine(&b, "Interrompido em", formatUserTime(stoppedAt, timezone))
+	writeRawHTMLLine(&b, "Doses já ocorridas", strconv.Itoa(alreadyOccurred))
+	writeRawHTMLLine(&b, "Doses futuras removidas", strconv.Itoa(futureDeleted))
+	return telegram.Message{Text: b.String(), ParseMode: telegram.ParseModeHTML}
+}
+
+func writeTreatmentBase(b *strings.Builder, pet *domain.Pet, treatment *domain.Treatment, timezone string) {
+	writeHTMLLine(b, "Pet", pet.Name)
+	writeHTMLLine(b, "Tratamento", treatment.Name)
+	writeHTMLLine(b, "Dose", formatDose(treatment))
+	writeHTMLLine(b, "Via", treatment.Route)
+	writeRawHTMLLine(b, "Intervalo", fmt.Sprintf("a cada %d horas", treatment.IntervalHours))
+	writeHTMLLine(b, "Início", formatUserTime(treatment.StartedAt, timezone))
+}
+
+func writeOptionalTreatmentDetails(b *strings.Builder, treatment *domain.Treatment) {
+	hasDetails := treatment.VetName != nil || treatment.Notes != nil
+	if !hasDetails {
+		return
+	}
+	b.WriteString("\n")
+	if treatment.VetName != nil {
+		writeHTMLLine(b, "Veterinário", *treatment.VetName)
+	}
+	if treatment.Notes != nil {
+		writeHTMLLine(b, "Observações", *treatment.Notes)
+	}
+}
+
+func formatDose(treatment *domain.Treatment) string {
+	amount := strconv.FormatFloat(treatment.DosageAmount, 'f', -1, 64)
+	if treatment.DosageUnit == "" {
+		return amount
+	}
+	return amount + " " + treatment.DosageUnit
 }

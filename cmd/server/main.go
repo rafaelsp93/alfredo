@@ -18,6 +18,7 @@ import (
 	"github.com/rafaelsoares/alfredo/internal/database"
 	"github.com/rafaelsoares/alfredo/internal/gcalendar"
 	"github.com/rafaelsoares/alfredo/internal/httpserver"
+	"github.com/rafaelsoares/alfredo/internal/telegram"
 )
 
 var version = "dev"
@@ -84,9 +85,30 @@ func main() {
 		)
 	}
 
+	// 6. Telegram adapter (no-op when credentials are absent)
+	var telegramAdapter app.TelegramPort
+	if cfg.Telegram.BotToken != "" && cfg.Telegram.ChatID != "" {
+		telegramAdapter, err = telegram.NewAdapter(telegram.AdapterConfig{
+			BotToken: cfg.Telegram.BotToken,
+			ChatID:   cfg.Telegram.ChatID,
+		})
+		if err != nil {
+			zapLogger.Fatal("telegram init failed", zap.Error(err))
+		}
+		zapLogger.Info("telegram adapter enabled", zap.String("mode", "telegram"))
+	} else {
+		telegramAdapter = telegram.NewNoopAdapter(zapLogger)
+		zapLogger.Warn("telegram noop adapter enabled",
+			zap.String("mode", "noop"),
+			zap.Bool("bot_token_set", cfg.Telegram.BotToken != ""),
+			zap.Bool("chat_id_set", cfg.Telegram.ChatID != ""),
+		)
+	}
+
 	e, err := httpserver.New(httpserver.Config{
 		DB:       db,
 		Calendar: calendarAdapter,
+		Telegram: telegramAdapter,
 		APIKey:   cfg.Auth.APIKey,
 		Location: loc,
 		Logger:   zapLogger,

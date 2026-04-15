@@ -13,5 +13,9 @@ gcalendar:
   client_secret: ""
   refresh_token: ""
 
+telegram:
+  bot_token: ""
+  chat_id: ""
+
 app:
   timezone: "America/Sao_Paulo"

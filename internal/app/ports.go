@@ -9,6 +9,7 @@ import (
 	"github.com/rafaelsoares/alfredo/internal/petcare/domain"
 	"github.com/rafaelsoares/alfredo/internal/petcare/service"
 	"github.com/rafaelsoares/alfredo/internal/shared/health"
+	"github.com/rafaelsoares/alfredo/internal/telegram"
 )
 
 var ErrTxCommit = errors.New("transaction commit failed")
@@ -62,6 +63,8 @@ type DoseServicer interface {
 }
 
 type CalendarPort = gcalendar.Port
+
+type TelegramPort = telegram.Port
 
 type PetCareTxRunner interface {
 	WithinTx(ctx context.Context, fn func(pets *service.PetService, vaccines *service.VaccineService, treatments *service.TreatmentService, doses *service.DoseService) error) error

@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -20,6 +21,7 @@ import (
 	"github.com/rafaelsoares/alfredo/internal/database"
 	"github.com/rafaelsoares/alfredo/internal/gcalendar"
 	"github.com/rafaelsoares/alfredo/internal/httpserver"
+	"github.com/rafaelsoares/alfredo/internal/telegram"
 )
 
 const testAPIKey = "integration-test-api-key-000000000000"
@@ -29,6 +31,7 @@ type fixture struct {
 	db       *sql.DB
 	echo     *echo.Echo
 	calendar *recordingCalendar
+	telegram *recordingTelegram
 }
 
 func newFixture(t *testing.T) *fixture {
@@ -49,9 +52,11 @@ func newFixture(t *testing.T) *fixture {
 		t.Fatalf("load location: %v", err)
 	}
 	calendar := &recordingCalendar{}
+	telegramRecorder := &recordingTelegram{}
 	e, err := httpserver.New(httpserver.Config{
 		DB:       db,
 		Calendar: calendar,
+		Telegram: telegramRecorder,
 		APIKey:   testAPIKey,
 		Location: loc,
 		Logger:   zap.NewNop(),
@@ -59,7 +64,7 @@ func newFixture(t *testing.T) *fixture {
 	if err != nil {
 		t.Fatalf("build server: %v", err)
 	}
-	return &fixture{t: t, db: db, echo: e, calendar: calendar}
+	return &fixture{t: t, db: db, echo: e, calendar: calendar, telegram: telegramRecorder}
 }
 
 type createdCalendar struct {
@@ -177,6 +182,34 @@ func (c *recordingCalendar) DeleteEvent(_ context.Context, calendarID string, ev
 	return nil
 }
 
+type recordingTelegram struct {
+	mu       sync.Mutex
+	failSend error
+	messages []telegram.Message
+}
+
+func (r *recordingTelegram) Send(_ context.Context, msg telegram.Message) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.messages = append(r.messages, msg)
+	if r.failSend != nil {
+		return r.failSend
+	}
+	return nil
+}
+
+func (r *recordingTelegram) count() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return len(r.messages)
+}
+
+func (r *recordingTelegram) message(index int) telegram.Message {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.messages[index]
+}
+
 func TestHealthAuthAndInvalidPathValidation(t *testing.T) {
 	fx := newFixture(t)
 
@@ -221,6 +254,7 @@ func TestPetLifecyclePersistsFieldsAndCalendarSideEffects(t *testing.T) {
 	requireEqual(t, "cal-01", pet.GoogleCalendarID, "response calendar id")
 	requireEqual(t, 1, len(fx.calendar.createdCalendars), "created calendar count")
 	requireEqual(t, "Luna", fx.calendar.createdCalendars[0].Name, "created calendar name")
+	requireEqual(t, 0, fx.telegram.count(), "telegram messages after pet create")
 
 	row := queryPet(t, fx.db, pet.ID)
 	requireEqual(t, "Luna", row.Name, "db pet name")
@@ -269,6 +303,7 @@ func TestPetLifecyclePersistsFieldsAndCalendarSideEffects(t *testing.T) {
 	requireEqual(t, 1, len(fx.calendar.deletedCalendars), "deleted calendar count")
 	requireEqual(t, "cal-01", fx.calendar.deletedCalendars[0].CalendarID, "deleted calendar id")
 	requireEqual(t, 0, countRows(t, fx.db, "pets"), "pet rows after delete")
+	requireEqual(t, 0, fx.telegram.count(), "telegram messages after pet delete")
 }
 
 func TestPetCalendarFailuresPreserveTransactionalState(t *testing.T) {
@@ -308,6 +343,17 @@ func TestVaccineLifecyclePersistsFieldsAndCalendarSideEffects(t *testing.T) {
 	requireEqual(t, "Pet: Luna", fx.calendar.createdEvents[0].Event.Description, "vaccine event description")
 	requireEqual(t, 0, fx.calendar.createdEvents[0].Event.ReminderMin, "vaccine event reminder")
 	requireEqual(t, "America/Sao_Paulo", fx.calendar.createdEvents[0].Event.TimeZone, "vaccine event timezone")
+	requireEqual(t, 1, fx.telegram.count(), "telegram message count after vaccine create")
+	assertTelegramHTML(t, fx.telegram.message(0), []string{
+		"<b>💉 Vacina registrada</b>",
+		"<b>Pet:</b> Luna",
+		"<b>Vacina:</b> Rabies",
+		"<b>Aplicada em:</b> 10/05/2026 09:30",
+		"<b>Próxima dose:</b> não configurada",
+		"<b>Veterinário:</b> Dr. Ana",
+		"<b>Lote:</b> B-123",
+		"<b>Observações:</b> left shoulder",
+	})
 
 	row := queryVaccine(t, fx.db, vaccine.ID)
 	requireEqual(t, pet.ID, row.PetID, "db vaccine pet id")
@@ -336,6 +382,14 @@ func TestVaccineLifecyclePersistsFieldsAndCalendarSideEffects(t *testing.T) {
 	requireEqual(t, 7*24*60, fx.calendar.createdEvents[2].Event.ReminderMin, "recurring vaccine next due reminder")
 	requireEqual(t, "Next due: V10", fx.calendar.createdEvents[2].Event.Title, "recurring vaccine next due event title")
 	requireEqual(t, "2027-06-01T08:00:00-03:00", fx.calendar.createdEvents[2].Event.StartTime.Format(time.RFC3339), "recurring vaccine next due event time")
+	requireEqual(t, 2, fx.telegram.count(), "telegram message count after recurring vaccine create")
+	assertTelegramHTML(t, fx.telegram.message(1), []string{
+		"<b>💉 Vacina registrada</b>",
+		"<b>Pet:</b> Luna",
+		"<b>Vacina:</b> V10",
+		"<b>Aplicada em:</b> 01/06/2026 08:00",
+		"<b>Próxima dose:</b> 01/06/2027 08:00",
+	})
 
 	recurringRow := queryVaccine(t, fx.db, recurring.ID)
 	requireEqual(t, "evt-02", recurringRow.GoogleCalendarEventID, "db recurring vaccine event id")
@@ -353,6 +407,14 @@ func TestVaccineLifecyclePersistsFieldsAndCalendarSideEffects(t *testing.T) {
 	requireEqual(t, "cal-01", fx.calendar.deletedEvents[0].CalendarID, "deleted vaccine event calendar id")
 	requireEqual(t, "evt-01", fx.calendar.deletedEvents[0].EventID, "deleted vaccine event id")
 	requireEqual(t, 1, countRows(t, fx.db, "vaccines"), "vaccine rows after delete")
+	requireEqual(t, 3, fx.telegram.count(), "telegram message count after vaccine delete")
+	assertTelegramHTML(t, fx.telegram.message(2), []string{
+		"<b>🗑️ Vacina removida</b>",
+		"<b>Pet:</b> Luna",
+		"<b>Vacina:</b> Rabies",
+		"<b>Aplicada em:</b> 10/05/2026 09:30",
+	})
+	requireNotContains(t, fx.telegram.message(2).Text, "Próxima dose removida", "non-recurring vaccine delete message")
 
 	rec = fx.doJSON(http.MethodDelete, "/api/v1/pets/"+pet.ID+"/vaccines/"+recurring.ID, nil, "bearer")
 	requireStatus(t, rec, http.StatusNoContent)
@@ -360,6 +422,13 @@ func TestVaccineLifecyclePersistsFieldsAndCalendarSideEffects(t *testing.T) {
 	requireEqual(t, "evt-02", fx.calendar.deletedEvents[1].EventID, "deleted recurring administered event id")
 	requireEqual(t, "evt-03", fx.calendar.deletedEvents[2].EventID, "deleted recurring next due event id")
 	requireEqual(t, 0, countRows(t, fx.db, "vaccines"), "vaccine rows after recurring delete")
+	requireEqual(t, 4, fx.telegram.count(), "telegram message count after recurring vaccine delete")
+	assertTelegramHTML(t, fx.telegram.message(3), []string{
+		"<b>🗑️ Vacina removida</b>",
+		"<b>Pet:</b> Luna",
+		"<b>Vacina:</b> V10",
+		"<b>Próxima dose removida:</b> 01/06/2027",
+	})
 }
 
 func TestVaccineFailuresAndValidationPreserveState(t *testing.T) {
@@ -374,6 +443,7 @@ func TestVaccineFailuresAndValidationPreserveState(t *testing.T) {
 	requireStatus(t, rec, http.StatusBadRequest)
 	requireEqual(t, 0, countRows(t, fx.db, "vaccines"), "vaccine rows after invalid date")
 	requireEqual(t, beforeEvents, len(fx.calendar.createdEvents), "calendar events after invalid date")
+	requireEqual(t, 0, fx.telegram.count(), "telegram messages after invalid vaccine date")
 
 	fx.calendar.failCreateEvent = errors.New("calendar event failed")
 	rec = fx.doJSON(http.MethodPost, "/api/v1/pets/"+pet.ID+"/vaccines", map[string]any{
@@ -382,6 +452,7 @@ func TestVaccineFailuresAndValidationPreserveState(t *testing.T) {
 	}, "bearer")
 	requireStatus(t, rec, http.StatusInternalServerError)
 	requireEqual(t, 0, countRows(t, fx.db, "vaccines"), "vaccine rows after calendar create failure")
+	requireEqual(t, 0, fx.telegram.count(), "telegram messages after vaccine calendar create failure")
 
 	fx = newFixture(t)
 	pet = fx.createPet(map[string]any{"name": "Luna", "species": "dog"})
@@ -397,6 +468,7 @@ func TestVaccineFailuresAndValidationPreserveState(t *testing.T) {
 	requireEqual(t, 1, len(fx.calendar.createdEvents), "created administered event before next due failure")
 	requireEqual(t, 1, len(fx.calendar.deletedEvents), "compensated administered event after next due failure")
 	requireEqual(t, "evt-01", fx.calendar.deletedEvents[0].EventID, "compensated administered event id")
+	requireEqual(t, 0, fx.telegram.count(), "telegram messages after next due calendar failure")
 
 	fx = newFixture(t)
 	pet = fx.createPet(map[string]any{"name": "Luna", "species": "dog"})
@@ -406,6 +478,7 @@ func TestVaccineFailuresAndValidationPreserveState(t *testing.T) {
 	requireStatus(t, rec, http.StatusInternalServerError)
 	requireEqual(t, 1, countRows(t, fx.db, "vaccines"), "vaccine rows after calendar delete failure")
 	requireEqual(t, "evt-01", queryVaccine(t, fx.db, vaccine.ID).GoogleCalendarEventID, "preserved vaccine event id")
+	requireEqual(t, 1, fx.telegram.count(), "telegram messages only from vaccine setup after delete failure")
 }
 
 func TestFiniteTreatmentLifecyclePersistsDosesAndCalendarSideEffects(t *testing.T) {
@@ -436,6 +509,20 @@ func TestFiniteTreatmentLifecyclePersistsDosesAndCalendarSideEffects(t *testing.
 		requireEqual(t, "America/Sao_Paulo", event.Event.TimeZone, "finite dose event timezone")
 		requireEqual(t, treatment.Doses[i].GoogleCalendarEventID, event.ID, "dose response event id")
 	}
+	requireEqual(t, 1, fx.telegram.count(), "telegram message count after finite treatment create")
+	assertTelegramHTML(t, fx.telegram.message(0), []string{
+		"<b>💊 Tratamento registrado</b>",
+		"<b>Pet:</b> Luna",
+		"<b>Tratamento:</b> Amoxicillin",
+		"<b>Dose:</b> 1.5 ml",
+		"<b>Via:</b> oral",
+		"<b>Intervalo:</b> a cada 3 horas",
+		"<b>Início:</b> 01/01/2030 09:00",
+		"<b>Fim previsto:</b> 01/01/2030 18:00",
+		"<b>Doses agendadas:</b> 3",
+		"<b>Veterinário:</b> Dr. Ana",
+		"<b>Observações:</b> with food",
+	})
 
 	row := queryTreatment(t, fx.db, treatment.ID)
 	requireEqual(t, pet.ID, row.PetID, "db treatment pet id")
@@ -469,6 +556,15 @@ func TestFiniteTreatmentLifecyclePersistsDosesAndCalendarSideEffects(t *testing.
 	requireEqual(t, 0, countRowsWhere(t, fx.db, "doses", "treatment_id = ?", treatment.ID), "future doses after stop")
 	stopped := queryTreatment(t, fx.db, treatment.ID)
 	requireEqual(t, true, stopped.StoppedAt.Valid, "finite treatment stopped_at set")
+	requireEqual(t, 2, fx.telegram.count(), "telegram message count after finite treatment stop")
+	assertTelegramHTML(t, fx.telegram.message(1), []string{
+		"<b>⛔ Tratamento interrompido</b>",
+		"<b>Pet:</b> Luna",
+		"<b>Tratamento:</b> Amoxicillin",
+		"<b>Interrompido em:</b>",
+		"<b>Doses já ocorridas:</b> 0",
+		"<b>Doses futuras removidas:</b> 3",
+	})
 }
 
 func TestRecurringTreatmentLifecyclePersistsSeriesAndStopsCalendar(t *testing.T) {
@@ -493,6 +589,17 @@ func TestRecurringTreatmentLifecyclePersistsSeriesAndStopsCalendar(t *testing.T)
 	requireEqual(t, 24, fx.calendar.createdEvents[0].Interval, "recurring interval")
 	requireEqual(t, "series-01", queryTreatment(t, fx.db, treatment.ID).GoogleCalendarEventID, "db recurring event id")
 	requireEqual(t, 0, countRowsWhere(t, fx.db, "doses", "treatment_id = ?", treatment.ID), "recurring db dose count")
+	requireEqual(t, 1, fx.telegram.count(), "telegram message count after recurring treatment create")
+	assertTelegramHTML(t, fx.telegram.message(0), []string{
+		"<b>💊 Tratamento contínuo registrado</b>",
+		"<b>Pet:</b> Luna",
+		"<b>Tratamento:</b> Daily med",
+		"<b>Dose:</b> 1 pill",
+		"<b>Via:</b> oral",
+		"<b>Intervalo:</b> a cada 24 horas",
+		"<b>Início:</b> 01/02/2030 08:00",
+		"<b>Fim previsto:</b> sem data definida",
+	})
 
 	rec = fx.doJSON(http.MethodDelete, "/api/v1/pets/"+pet.ID+"/treatments/"+treatment.ID, nil, "bearer")
 	requireStatus(t, rec, http.StatusNoContent)
@@ -501,6 +608,16 @@ func TestRecurringTreatmentLifecyclePersistsSeriesAndStopsCalendar(t *testing.T)
 	requireEqual(t, "series-01", fx.calendar.stoppedRecurringEvents[0].EventID, "stopped recurring event id")
 	requireEqual(t, true, fx.calendar.stoppedRecurringEvents[0].Until.After(time.Time{}), "stopped recurring until set")
 	requireEqual(t, true, queryTreatment(t, fx.db, treatment.ID).StoppedAt.Valid, "recurring treatment stopped_at set")
+	requireEqual(t, 2, fx.telegram.count(), "telegram message count after recurring treatment stop")
+	assertTelegramHTML(t, fx.telegram.message(1), []string{
+		"<b>⛔ Tratamento contínuo interrompido</b>",
+		"<b>Pet:</b> Luna",
+		"<b>Tratamento:</b> Daily med",
+		"<b>Interrompido em:</b>",
+		"<b>Série recorrente:</b> encerrada no calendário",
+	})
+	requireNotContains(t, fx.telegram.message(1).Text, "Doses já ocorridas", "recurring treatment stop message")
+	requireNotContains(t, fx.telegram.message(1).Text, "Doses futuras removidas", "recurring treatment stop message")
 }
 
 func TestTreatmentFailuresAndValidationPreserveState(t *testing.T) {
@@ -518,6 +635,7 @@ func TestTreatmentFailuresAndValidationPreserveState(t *testing.T) {
 	requireStatus(t, rec, http.StatusBadRequest)
 	requireEqual(t, 0, countRows(t, fx.db, "treatments"), "treatment rows after invalid started_at")
 	requireEqual(t, 0, len(fx.calendar.createdEvents), "calendar events after invalid started_at")
+	requireEqual(t, 0, fx.telegram.count(), "telegram messages after invalid treatment started_at")
 
 	fx.calendar.failCreateEvent = errors.New("dose calendar failed")
 	rec = fx.doJSON(http.MethodPost, "/api/v1/pets/"+pet.ID+"/treatments", map[string]any{
@@ -532,6 +650,7 @@ func TestTreatmentFailuresAndValidationPreserveState(t *testing.T) {
 	requireStatus(t, rec, http.StatusInternalServerError)
 	requireEqual(t, 0, countRows(t, fx.db, "treatments"), "treatment rows after finite calendar create failure")
 	requireEqual(t, 0, countRows(t, fx.db, "doses"), "dose rows after finite calendar create failure")
+	requireEqual(t, 0, fx.telegram.count(), "telegram messages after finite calendar create failure")
 
 	fx = newFixture(t)
 	pet = fx.createPet(map[string]any{"name": "Luna", "species": "dog"})
@@ -546,6 +665,7 @@ func TestTreatmentFailuresAndValidationPreserveState(t *testing.T) {
 	}, "bearer")
 	requireStatus(t, rec, http.StatusInternalServerError)
 	requireEqual(t, 0, countRows(t, fx.db, "treatments"), "treatment rows after recurring calendar create failure")
+	requireEqual(t, 0, fx.telegram.count(), "telegram messages after recurring calendar create failure")
 
 	fx = newFixture(t)
 	pet = fx.createPet(map[string]any{"name": "Luna", "species": "dog"})
@@ -563,6 +683,7 @@ func TestTreatmentFailuresAndValidationPreserveState(t *testing.T) {
 	requireStatus(t, rec, http.StatusInternalServerError)
 	requireEqual(t, 2, countRowsWhere(t, fx.db, "doses", "treatment_id = ?", finite.ID), "finite doses after delete event failure")
 	requireEqual(t, false, queryTreatment(t, fx.db, finite.ID).StoppedAt.Valid, "finite treatment stopped after delete event failure")
+	requireEqual(t, 1, fx.telegram.count(), "telegram messages only from finite treatment setup after stop failure")
 
 	fx = newFixture(t)
 	pet = fx.createPet(map[string]any{"name": "Luna", "species": "dog"})
@@ -578,6 +699,7 @@ func TestTreatmentFailuresAndValidationPreserveState(t *testing.T) {
 	rec = fx.doJSON(http.MethodDelete, "/api/v1/pets/"+pet.ID+"/treatments/"+recurring.ID, nil, "bearer")
 	requireStatus(t, rec, http.StatusInternalServerError)
 	requireEqual(t, false, queryTreatment(t, fx.db, recurring.ID).StoppedAt.Valid, "recurring treatment stopped after stop event failure")
+	requireEqual(t, 1, fx.telegram.count(), "telegram messages only from recurring treatment setup after stop failure")
 
 	rec = fx.doJSON(http.MethodPost, "/api/v1/pets/"+pet.ID+"/treatments", map[string]any{
 		"name":           "Bad date",
@@ -589,6 +711,47 @@ func TestTreatmentFailuresAndValidationPreserveState(t *testing.T) {
 		"ended_at":       "2030-07-02",
 	}, "bearer")
 	requireStatus(t, rec, http.StatusBadRequest)
+}
+
+func TestTelegramFailuresDoNotRollbackPetcareState(t *testing.T) {
+	fx := newFixture(t)
+	pet := fx.createPet(map[string]any{"name": "Luna", "species": "dog"})
+	fx.telegram.failSend = errors.New("telegram unavailable")
+
+	rec := fx.doJSON(http.MethodPost, "/api/v1/pets/"+pet.ID+"/vaccines", map[string]any{
+		"name": "Rabies",
+		"date": "2026-05-10T09:30:00",
+	}, "bearer")
+	requireStatus(t, rec, http.StatusCreated)
+	var vaccine vaccineResponse
+	decodeJSON(t, rec, &vaccine)
+	requireEqual(t, 1, countRows(t, fx.db, "vaccines"), "vaccine rows after telegram failure")
+	requireEqual(t, 1, fx.telegram.count(), "telegram send attempts after vaccine create failure")
+
+	rec = fx.doJSON(http.MethodDelete, "/api/v1/pets/"+pet.ID+"/vaccines/"+vaccine.ID, nil, "bearer")
+	requireStatus(t, rec, http.StatusNoContent)
+	requireEqual(t, 0, countRows(t, fx.db, "vaccines"), "vaccine rows after telegram delete failure")
+	requireEqual(t, 2, fx.telegram.count(), "telegram send attempts after vaccine delete failure")
+
+	rec = fx.doJSON(http.MethodPost, "/api/v1/pets/"+pet.ID+"/treatments", map[string]any{
+		"name":           "Amoxicillin",
+		"dosage_amount":  1,
+		"dosage_unit":    "ml",
+		"route":          "oral",
+		"interval_hours": 24,
+		"started_at":     "2030-01-01T09:00:00",
+		"ended_at":       "2030-01-03T09:00:00",
+	}, "bearer")
+	requireStatus(t, rec, http.StatusCreated)
+	var treatment treatmentResponse
+	decodeJSON(t, rec, &treatment)
+	requireEqual(t, 1, countRows(t, fx.db, "treatments"), "treatment rows after telegram failure")
+	requireEqual(t, 3, fx.telegram.count(), "telegram send attempts after treatment create failure")
+
+	rec = fx.doJSON(http.MethodDelete, "/api/v1/pets/"+pet.ID+"/treatments/"+treatment.ID, nil, "bearer")
+	requireStatus(t, rec, http.StatusNoContent)
+	requireEqual(t, true, queryTreatment(t, fx.db, treatment.ID).StoppedAt.Valid, "treatment stopped after telegram failure")
+	requireEqual(t, 4, fx.telegram.count(), "telegram send attempts after treatment stop failure")
 }
 
 func (fx *fixture) createPet(body map[string]any) petResponse {
@@ -818,5 +981,27 @@ func requireNonEmpty(t requireT, got string, label string) {
 	t.Helper()
 	if got == "" {
 		t.Fatalf("%s is empty", label)
+	}
+}
+
+func assertTelegramHTML(t requireT, msg telegram.Message, wantParts []string) {
+	t.Helper()
+	requireEqual(t, telegram.ParseModeHTML, msg.ParseMode, "telegram parse mode")
+	for _, part := range wantParts {
+		requireContains(t, msg.Text, part, "telegram message")
+	}
+}
+
+func requireContains(t requireT, got, want, label string) {
+	t.Helper()
+	if !strings.Contains(got, want) {
+		t.Fatalf("%s = %q, want substring %q", label, got, want)
+	}
+}
+
+func requireNotContains(t requireT, got, unwanted, label string) {
+	t.Helper()
+	if strings.Contains(got, unwanted) {
+		t.Fatalf("%s = %q, did not expect substring %q", label, got, unwanted)
 	}
 }
