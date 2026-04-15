@@ -6,9 +6,9 @@ import (
 	"time"
 
 	"github.com/labstack/echo/v4"
+	"github.com/rafaelsoares/alfredo/internal/logger"
 	"github.com/rafaelsoares/alfredo/internal/petcare/domain"
 	"github.com/rafaelsoares/alfredo/internal/petcare/service"
-	"github.com/rafaelsoares/alfredo/internal/logger"
 	"go.uber.org/zap"
 )
 
@@ -47,27 +47,29 @@ type petRequest struct {
 }
 
 type petResponse struct {
-	ID             string   `json:"id"`
-	Name           string   `json:"name"`
-	Species        string   `json:"species"`
-	Breed          *string  `json:"breed,omitempty"`
-	BirthDate      *string  `json:"birth_date,omitempty"`
-	WeightKg       *float64 `json:"weight_kg,omitempty"`
-	DailyFoodGrams *float64 `json:"daily_food_grams,omitempty"`
-	PhotoPath      *string  `json:"photo_path,omitempty"`
-	CreatedAt      string   `json:"created_at"`
+	ID               string   `json:"id"`
+	Name             string   `json:"name"`
+	Species          string   `json:"species"`
+	Breed            *string  `json:"breed,omitempty"`
+	BirthDate        *string  `json:"birth_date,omitempty"`
+	WeightKg         *float64 `json:"weight_kg,omitempty"`
+	DailyFoodGrams   *float64 `json:"daily_food_grams,omitempty"`
+	PhotoPath        *string  `json:"photo_path,omitempty"`
+	GoogleCalendarID string   `json:"google_calendar_id"`
+	CreatedAt        string   `json:"created_at"`
 }
 
 func toPetResponse(p domain.Pet) petResponse {
 	r := petResponse{
-		ID:             p.ID,
-		Name:           p.Name,
-		Species:        p.Species,
-		Breed:          p.Breed,
-		WeightKg:       p.WeightKg,
-		DailyFoodGrams: p.DailyFoodGrams,
-		PhotoPath:      p.PhotoPath,
-		CreatedAt:      p.CreatedAt.Format(time.RFC3339),
+		ID:               p.ID,
+		Name:             p.Name,
+		Species:          p.Species,
+		Breed:            p.Breed,
+		WeightKg:         p.WeightKg,
+		DailyFoodGrams:   p.DailyFoodGrams,
+		PhotoPath:        p.PhotoPath,
+		GoogleCalendarID: p.GoogleCalendarID,
+		CreatedAt:        p.CreatedAt.Format(time.RFC3339),
 	}
 	if p.BirthDate != nil {
 		s := p.BirthDate.Format("2006-01-02")

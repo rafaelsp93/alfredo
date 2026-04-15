@@ -9,6 +9,7 @@ import (
 	"github.com/rafaelsoares/alfredo/internal/logger"
 	"github.com/rafaelsoares/alfredo/internal/petcare/domain"
 	"github.com/rafaelsoares/alfredo/internal/petcare/service"
+	"github.com/rafaelsoares/alfredo/internal/timeutil"
 	"go.uber.org/zap"
 )
 
@@ -21,10 +22,11 @@ type VaccineServicer interface {
 
 type VaccineHandler struct {
 	svc VaccineServicer
+	loc *time.Location
 }
 
-func NewVaccineHandler(svc VaccineServicer) *VaccineHandler {
-	return &VaccineHandler{svc: svc}
+func NewVaccineHandler(svc VaccineServicer, loc *time.Location) *VaccineHandler {
+	return &VaccineHandler{svc: svc, loc: loc}
 }
 
 func (h *VaccineHandler) Register(g *echo.Group) {
@@ -56,9 +58,9 @@ func (h *VaccineHandler) RecordVaccine(c echo.Context) error {
 		return nil
 	}
 	var req struct {
-		Name           string `json:"name" validate:"required,min=1,max=100"`
-		Date           string `json:"date" validate:"required"`
-		RecurrenceDays *int   `json:"recurrence_days" validate:"omitempty,min=1"`
+		Name           string  `json:"name" validate:"required,min=1,max=100"`
+		Date           string  `json:"date" validate:"required"`
+		RecurrenceDays *int    `json:"recurrence_days" validate:"omitempty,min=1"`
 		VetName        *string `json:"vet_name" validate:"omitempty,max=100"`
 		BatchNumber    *string `json:"batch_number" validate:"omitempty,max=50"`
 		Notes          *string `json:"notes" validate:"omitempty,max=500"`
@@ -69,12 +71,12 @@ func (h *VaccineHandler) RecordVaccine(c echo.Context) error {
 	if !validateRequest(c, &req) {
 		return nil
 	}
-	adminAt, err := time.Parse(time.RFC3339, req.Date)
+	adminAt, err := timeutil.ParseUserTime(req.Date, h.loc)
 	if err != nil {
 		return c.JSON(http.StatusBadRequest, newErrorResponse(
 			"validation_failed",
 			"Request validation failed",
-			[]fieldError{{Field: "date", Issue: "must be RFC3339 format"}},
+			[]fieldError{{Field: "date", Issue: "must be RFC3339 with offset or YYYY-MM-DDTHH:MM:SS"}},
 		))
 	}
 	v, err := h.svc.RecordVaccine(c.Request().Context(), service.RecordVaccineInput{
@@ -107,25 +109,27 @@ func (h *VaccineHandler) DeleteVaccine(c echo.Context) error {
 // --- response types ---
 
 type vaccineResponse struct {
-	ID          string  `json:"id"`
-	PetID       string  `json:"pet_id"`
-	Name        string  `json:"name"`
-	Date        string  `json:"date"`
-	NextDueAt   *string `json:"next_due_at,omitempty"`
-	VetName     *string `json:"vet_name,omitempty"`
-	BatchNumber *string `json:"batch_number,omitempty"`
-	Notes       *string `json:"notes,omitempty"`
+	ID                    string  `json:"id"`
+	PetID                 string  `json:"pet_id"`
+	Name                  string  `json:"name"`
+	Date                  string  `json:"date"`
+	NextDueAt             *string `json:"next_due_at,omitempty"`
+	VetName               *string `json:"vet_name,omitempty"`
+	BatchNumber           *string `json:"batch_number,omitempty"`
+	Notes                 *string `json:"notes,omitempty"`
+	GoogleCalendarEventID string  `json:"google_calendar_event_id"`
 }
 
 func toVaccineResponse(v domain.Vaccine) vaccineResponse {
 	r := vaccineResponse{
-		ID:          v.ID,
-		PetID:       v.PetID,
-		Name:        v.Name,
-		Date:        v.AdministeredAt.Format(time.RFC3339),
-		VetName:     v.VetName,
-		BatchNumber: v.BatchNumber,
-		Notes:       v.Notes,
+		ID:                    v.ID,
+		PetID:                 v.PetID,
+		Name:                  v.Name,
+		Date:                  v.AdministeredAt.Format(time.RFC3339),
+		VetName:               v.VetName,
+		BatchNumber:           v.BatchNumber,
+		Notes:                 v.Notes,
+		GoogleCalendarEventID: v.GoogleCalendarEventID,
 	}
 	if v.NextDueAt != nil {
 		s := v.NextDueAt.Format("2006-01-02")

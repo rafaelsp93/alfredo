@@ -2,20 +2,26 @@ package app
 
 import (
 	"context"
-	"time"
+	"errors"
+	"fmt"
 
 	"github.com/rafaelsoares/alfredo/internal/petcare/domain"
 	"github.com/rafaelsoares/alfredo/internal/petcare/service"
-	"github.com/rafaelsoares/alfredo/internal/webhook"
+	"go.uber.org/zap"
 )
 
 type PetUseCase struct {
-	svc     PetCareServicer
-	emitter webhook.EventEmitter
+	svc      PetCareServicer
+	txRunner PetCareTxRunner
+	calendar CalendarPort
+	logger   *zap.Logger
 }
 
-func NewPetUseCase(svc PetCareServicer, emitter webhook.EventEmitter) *PetUseCase {
-	return &PetUseCase{svc: svc, emitter: emitter}
+func NewPetUseCase(svc PetCareServicer, txRunner PetCareTxRunner, calendar CalendarPort, logger *zap.Logger) *PetUseCase {
+	if logger == nil {
+		logger = zap.NewNop()
+	}
+	return &PetUseCase{svc: svc, txRunner: txRunner, calendar: calendar, logger: logger}
 }
 
 func (uc *PetUseCase) List(ctx context.Context) ([]domain.Pet, error) {
@@ -23,26 +29,31 @@ func (uc *PetUseCase) List(ctx context.Context) ([]domain.Pet, error) {
 }
 
 func (uc *PetUseCase) Create(ctx context.Context, in service.CreatePetInput) (*domain.Pet, error) {
-	pet, err := uc.svc.Create(ctx, in)
+	calendarID, err := uc.calendar.CreateCalendar(ctx, in.Name)
 	if err != nil {
+		return nil, fmt.Errorf("create calendar for pet %q: %w", in.Name, err)
+	}
+	in.GoogleCalendarID = calendarID
+
+	var pet *domain.Pet
+	err = uc.txRunner.WithinTx(ctx, func(pets *service.PetService, _ *service.VaccineService, _ *service.TreatmentService, _ *service.DoseService) error {
+		created, err := pets.Create(ctx, in)
+		if err != nil {
+			return fmt.Errorf("create pet: %w", err)
+		}
+		pet = created
+		return nil
+	})
+	if err != nil {
+		if delErr := uc.calendar.DeleteCalendar(ctx, calendarID); delErr != nil {
+			uc.logger.Error("calendar compensation failed after pet create error",
+				zap.String("calendar_id", calendarID),
+				zap.Error(delErr),
+			)
+		}
 		return nil, err
 	}
-	uc.emitter.Emit(ctx, "pet.created", petCreatedPayload{
-		ID:        pet.ID,
-		Name:      pet.Name,
-		Species:   pet.Species,
-		Breed:     pet.Breed,
-		BirthDate: pet.BirthDate,
-	})
 	return pet, nil
-}
-
-type petCreatedPayload struct {
-	ID        string     `json:"id"`
-	Name      string     `json:"pet_name"`
-	Species   string     `json:"species"`
-	Breed     *string    `json:"breed"`
-	BirthDate *time.Time `json:"birth_date"`
 }
 
 func (uc *PetUseCase) GetByID(ctx context.Context, id string) (*domain.Pet, error) {
@@ -54,24 +65,32 @@ func (uc *PetUseCase) Update(ctx context.Context, id string, in service.UpdatePe
 }
 
 func (uc *PetUseCase) Delete(ctx context.Context, id string) error {
-	pet, err := uc.svc.GetByID(ctx, id)
-	if err != nil {
-		return err
-	}
+	var pet *domain.Pet
+	externalDeleted := false
 
-	err = uc.svc.Delete(ctx, id)
-	if err != nil {
-		return err
-	}
-
-	uc.emitter.Emit(ctx, "pet.deleted", petDeletedPayload{
-		PetID: pet.ID,
-		Name:  pet.Name,
+	err := uc.txRunner.WithinTx(ctx, func(pets *service.PetService, _ *service.VaccineService, _ *service.TreatmentService, _ *service.DoseService) error {
+		loaded, err := pets.GetByID(ctx, id)
+		if err != nil {
+			return fmt.Errorf("load pet %q: %w", id, err)
+		}
+		pet = loaded
+		if pet.GoogleCalendarID != "" {
+			if err := uc.calendar.DeleteCalendar(ctx, pet.GoogleCalendarID); err != nil {
+				return fmt.Errorf("delete calendar %q: %w", pet.GoogleCalendarID, err)
+			}
+			externalDeleted = true
+		}
+		if err := pets.Delete(ctx, id); err != nil {
+			return fmt.Errorf("delete pet %q: %w", id, err)
+		}
+		return nil
 	})
-	return nil
-}
-
-type petDeletedPayload struct {
-	PetID string `json:"pet_id"`
-	Name  string `json:"pet_name"`
+	if err != nil && externalDeleted && errors.Is(err, ErrTxCommit) {
+		uc.logger.Error("pet delete committed external change before local commit failed",
+			zap.String("pet_id", id),
+			zap.String("calendar_id", pet.GoogleCalendarID),
+			zap.Error(err),
+		)
+	}
+	return err
 }

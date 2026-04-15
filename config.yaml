@@ -8,6 +8,10 @@ database:
 photos:
   dir: "./photos"
 
-webhook:
-  base_url: "http://localhost:5678/webhook"
-  api_key: "change-me-in-production"
+gcalendar:
+  client_id: ""
+  client_secret: ""
+  refresh_token: ""
+
+app:
+  timezone: "America/Sao_Paulo"

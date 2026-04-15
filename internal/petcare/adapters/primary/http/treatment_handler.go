@@ -12,6 +12,7 @@ import (
 	"github.com/rafaelsoares/alfredo/internal/logger"
 	"github.com/rafaelsoares/alfredo/internal/petcare/domain"
 	"github.com/rafaelsoares/alfredo/internal/petcare/service"
+	"github.com/rafaelsoares/alfredo/internal/timeutil"
 )
 
 // TreatmentServicer is the consumer-defined interface consumed by TreatmentHandler.
@@ -24,10 +25,11 @@ type TreatmentServicer interface {
 
 type TreatmentHandler struct {
 	svc TreatmentServicer
+	loc *time.Location
 }
 
-func NewTreatmentHandler(svc TreatmentServicer) *TreatmentHandler {
-	return &TreatmentHandler{svc: svc}
+func NewTreatmentHandler(svc TreatmentServicer, loc *time.Location) *TreatmentHandler {
+	return &TreatmentHandler{svc: svc, loc: loc}
 }
 
 func (h *TreatmentHandler) Register(g *echo.Group) {
@@ -59,11 +61,11 @@ func (h *TreatmentHandler) StartTreatment(c echo.Context) error {
 	if !validateRequest(c, &req) {
 		return nil
 	}
-	startedAt, err := time.Parse(time.RFC3339, req.StartedAt)
+	startedAt, err := timeutil.ParseUserTime(req.StartedAt, h.loc)
 	if err != nil {
 		return c.JSON(http.StatusBadRequest, newErrorResponse(
 			"validation_failed", "Request validation failed",
-			[]fieldError{{Field: "started_at", Issue: "must be RFC3339 format"}},
+			[]fieldError{{Field: "started_at", Issue: "must be RFC3339 with offset or YYYY-MM-DDTHH:MM:SS"}},
 		))
 	}
 	in := service.CreateTreatmentInput{
@@ -78,11 +80,11 @@ func (h *TreatmentHandler) StartTreatment(c echo.Context) error {
 		Notes:         req.Notes,
 	}
 	if req.EndedAt != nil {
-		endedAt, err := time.Parse(time.RFC3339, *req.EndedAt)
+		endedAt, err := timeutil.ParseUserTime(*req.EndedAt, h.loc)
 		if err != nil {
 			return c.JSON(http.StatusBadRequest, newErrorResponse(
 				"validation_failed", "Request validation failed",
-				[]fieldError{{Field: "ended_at", Issue: "must be RFC3339 format"}},
+				[]fieldError{{Field: "ended_at", Issue: "must be RFC3339 with offset or YYYY-MM-DDTHH:MM:SS"}},
 			))
 		}
 		in.EndedAt = &endedAt
@@ -154,41 +156,44 @@ func (h *TreatmentHandler) StopTreatment(c echo.Context) error {
 // --- response types ---
 
 type doseResponse struct {
-	ID           string `json:"id"`
-	ScheduledFor string `json:"scheduled_for"`
+	ID                    string `json:"id"`
+	ScheduledFor          string `json:"scheduled_for"`
+	GoogleCalendarEventID string `json:"google_calendar_event_id,omitempty"`
 }
 
 type treatmentResponse struct {
-	ID            string         `json:"id"`
-	PetID         string         `json:"pet_id"`
-	Name          string         `json:"name"`
-	DosageAmount  float64        `json:"dosage_amount"`
-	DosageUnit    string         `json:"dosage_unit"`
-	Route         string         `json:"route"`
-	IntervalHours int            `json:"interval_hours"`
-	StartedAt     string         `json:"started_at"`
-	EndedAt       *string        `json:"ended_at"`
-	StoppedAt     *string        `json:"stopped_at"`
-	VetName       *string        `json:"vet_name,omitempty"`
-	Notes         *string        `json:"notes,omitempty"`
-	CreatedAt     string         `json:"created_at"`
-	Doses         []doseResponse `json:"doses"`
+	ID                    string         `json:"id"`
+	PetID                 string         `json:"pet_id"`
+	Name                  string         `json:"name"`
+	DosageAmount          float64        `json:"dosage_amount"`
+	DosageUnit            string         `json:"dosage_unit"`
+	Route                 string         `json:"route"`
+	IntervalHours         int            `json:"interval_hours"`
+	StartedAt             string         `json:"started_at"`
+	EndedAt               *string        `json:"ended_at"`
+	StoppedAt             *string        `json:"stopped_at"`
+	VetName               *string        `json:"vet_name,omitempty"`
+	Notes                 *string        `json:"notes,omitempty"`
+	GoogleCalendarEventID string         `json:"google_calendar_event_id,omitempty"`
+	CreatedAt             string         `json:"created_at"`
+	Doses                 []doseResponse `json:"doses"`
 }
 
 func toTreatmentResponse(t domain.Treatment, doses []domain.Dose) treatmentResponse {
 	r := treatmentResponse{
-		ID:            t.ID,
-		PetID:         t.PetID,
-		Name:          t.Name,
-		DosageAmount:  t.DosageAmount,
-		DosageUnit:    t.DosageUnit,
-		Route:         t.Route,
-		IntervalHours: t.IntervalHours,
-		StartedAt:     t.StartedAt.Format(time.RFC3339),
-		VetName:       t.VetName,
-		Notes:         t.Notes,
-		CreatedAt:     t.CreatedAt.Format(time.RFC3339),
-		Doses:         make([]doseResponse, 0, len(doses)),
+		ID:                    t.ID,
+		PetID:                 t.PetID,
+		Name:                  t.Name,
+		DosageAmount:          t.DosageAmount,
+		DosageUnit:            t.DosageUnit,
+		Route:                 t.Route,
+		IntervalHours:         t.IntervalHours,
+		StartedAt:             t.StartedAt.Format(time.RFC3339),
+		VetName:               t.VetName,
+		Notes:                 t.Notes,
+		GoogleCalendarEventID: t.GoogleCalendarEventID,
+		CreatedAt:             t.CreatedAt.Format(time.RFC3339),
+		Doses:                 make([]doseResponse, 0, len(doses)),
 	}
 	if t.EndedAt != nil {
 		s := t.EndedAt.Format(time.RFC3339)
@@ -200,8 +205,9 @@ func toTreatmentResponse(t domain.Treatment, doses []domain.Dose) treatmentRespo
 	}
 	for _, d := range doses {
 		r.Doses = append(r.Doses, doseResponse{
-			ID:           d.ID,
-			ScheduledFor: d.ScheduledFor.Format(time.RFC3339),
+			ID:                    d.ID,
+			ScheduledFor:          d.ScheduledFor.Format(time.RFC3339),
+			GoogleCalendarEventID: d.GoogleCalendarEventID,
 		})
 	}
 	return r

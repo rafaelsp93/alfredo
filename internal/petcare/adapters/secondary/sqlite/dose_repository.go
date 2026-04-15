@@ -3,17 +3,15 @@ package sqlite
 
 import (
 	"context"
-	"database/sql"
-	"errors"
 	"fmt"
 	"time"
 
 	"github.com/rafaelsoares/alfredo/internal/petcare/domain"
 )
 
-type DoseRepository struct{ db *sql.DB }
+type DoseRepository struct{ db dbtx }
 
-func NewDoseRepository(db *sql.DB) *DoseRepository {
+func NewDoseRepository(db dbtx) *DoseRepository {
 	return &DoseRepository{db: db}
 }
 
@@ -21,28 +19,22 @@ func (r *DoseRepository) CreateBatch(ctx context.Context, doses []domain.Dose) e
 	if len(doses) == 0 {
 		return nil
 	}
-	tx, err := r.db.BeginTx(ctx, nil)
+	stmt, err := r.db.PrepareContext(ctx, `INSERT INTO doses (id, treatment_id, pet_id, scheduled_for, google_calendar_event_id) VALUES (?, ?, ?, ?, ?)`)
 	if err != nil {
-		return err
-	}
-	stmt, err := tx.PrepareContext(ctx, `INSERT INTO doses (id, treatment_id, pet_id, scheduled_for) VALUES (?, ?, ?, ?)`)
-	if err != nil {
-		_ = tx.Rollback()
 		return err
 	}
 	defer stmt.Close() //nolint:errcheck
 	for _, d := range doses {
-		if _, err := stmt.ExecContext(ctx, d.ID, d.TreatmentID, d.PetID, d.ScheduledFor.Format(time.RFC3339)); err != nil {
-			_ = tx.Rollback()
+		if _, err := stmt.ExecContext(ctx, d.ID, d.TreatmentID, d.PetID, d.ScheduledFor.Format(time.RFC3339), d.GoogleCalendarEventID); err != nil {
 			return err
 		}
 	}
-	return tx.Commit()
+	return nil
 }
 
 func (r *DoseRepository) ListByTreatment(ctx context.Context, treatmentID string) ([]domain.Dose, error) {
 	rows, err := r.db.QueryContext(ctx,
-		`SELECT id, treatment_id, pet_id, scheduled_for FROM doses WHERE treatment_id = ? ORDER BY scheduled_for ASC`,
+		`SELECT id, treatment_id, pet_id, scheduled_for, google_calendar_event_id FROM doses WHERE treatment_id = ? ORDER BY scheduled_for ASC`,
 		treatmentID)
 	if err != nil {
 		return nil, err
@@ -59,74 +51,37 @@ func (r *DoseRepository) ListByTreatment(ctx context.Context, treatmentID string
 	return doses, rows.Err()
 }
 
-func (r *DoseRepository) DeleteFutureDoses(ctx context.Context, treatmentID string, after time.Time) ([]string, error) {
+func (r *DoseRepository) ListFutureByTreatment(ctx context.Context, treatmentID string, after time.Time) ([]domain.Dose, error) {
 	afterStr := after.Format(time.RFC3339)
 	rows, err := r.db.QueryContext(ctx,
-		`SELECT id FROM doses WHERE treatment_id = ? AND scheduled_for > ?`,
+		`SELECT id, treatment_id, pet_id, scheduled_for, google_calendar_event_id FROM doses WHERE treatment_id = ? AND scheduled_for > ? ORDER BY scheduled_for ASC`,
 		treatmentID, afterStr)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close() //nolint:errcheck
-	var ids []string
+	var doses []domain.Dose
 	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
-			return nil, err
-		}
-		ids = append(ids, id)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	if len(ids) == 0 {
-		return nil, nil
-	}
-	if _, err := r.db.ExecContext(ctx,
-		`DELETE FROM doses WHERE treatment_id = ? AND scheduled_for > ?`,
-		treatmentID, afterStr); err != nil {
-		return nil, err
-	}
-	return ids, nil
-}
-
-func (r *DoseRepository) ListOpenEndedActiveTreatments(ctx context.Context) ([]domain.Treatment, error) {
-	rows, err := r.db.QueryContext(ctx,
-		`SELECT id, pet_id, name, dosage_amount, dosage_unit, route, interval_hours, started_at, ended_at, stopped_at, vet_name, notes, created_at
-		 FROM treatments WHERE ended_at IS NULL AND stopped_at IS NULL`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close() //nolint:errcheck
-	var ts []domain.Treatment
-	for rows.Next() {
-		t, err := scanTreatment(rows)
+		d, err := scanDose(rows)
 		if err != nil {
 			return nil, err
 		}
-		ts = append(ts, *t)
+		doses = append(doses, *d)
 	}
-	return ts, rows.Err()
+	return doses, rows.Err()
 }
 
-func (r *DoseRepository) LatestDoseFor(ctx context.Context, treatmentID string) (*domain.Dose, error) {
-	row := r.db.QueryRowContext(ctx,
-		`SELECT id, treatment_id, pet_id, scheduled_for FROM doses WHERE treatment_id = ? ORDER BY scheduled_for DESC LIMIT 1`,
-		treatmentID)
-	d, err := scanDose(row)
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil, nil
-		}
-		return nil, err
-	}
-	return d, nil
+func (r *DoseRepository) DeleteFutureByTreatment(ctx context.Context, treatmentID string, after time.Time) error {
+	_, err := r.db.ExecContext(ctx,
+		`DELETE FROM doses WHERE treatment_id = ? AND scheduled_for > ?`,
+		treatmentID, after.Format(time.RFC3339))
+	return err
 }
 
 func scanDose(s scanner) (*domain.Dose, error) {
 	var d domain.Dose
 	var scheduledFor string
-	if err := s.Scan(&d.ID, &d.TreatmentID, &d.PetID, &scheduledFor); err != nil {
+	if err := s.Scan(&d.ID, &d.TreatmentID, &d.PetID, &scheduledFor, &d.GoogleCalendarEventID); err != nil {
 		return nil, err
 	}
 	var err error

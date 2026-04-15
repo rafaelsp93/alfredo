@@ -2,23 +2,25 @@ package app
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"time"
 
 	"go.uber.org/zap"
 
+	"github.com/rafaelsoares/alfredo/internal/gcalendar"
 	"github.com/rafaelsoares/alfredo/internal/petcare/domain"
 	"github.com/rafaelsoares/alfredo/internal/petcare/service"
-	"github.com/rafaelsoares/alfredo/internal/webhook"
 )
 
-const doseWindowDays = 90
-
-// TreatmentUseCase orchestrates treatment creation, dose generation, and webhook emission.
+// TreatmentUseCase orchestrates treatment creation, dose generation, and calendar side effects.
 type TreatmentUseCase struct {
 	treatments TreatmentServicer
 	doses      DoseServicer
 	pets       PetNameGetter
-	emitter    webhook.EventEmitter
+	txRunner   PetCareTxRunner
+	calendar   CalendarPort
+	timezone   string
 	logger     *zap.Logger
 }
 
@@ -26,49 +28,66 @@ func NewTreatmentUseCase(
 	treatments TreatmentServicer,
 	doses DoseServicer,
 	pets PetNameGetter,
-	emitter webhook.EventEmitter,
+	txRunner PetCareTxRunner,
+	calendar CalendarPort,
+	timezone string,
 	logger *zap.Logger,
 ) *TreatmentUseCase {
-	return &TreatmentUseCase{treatments: treatments, doses: doses, pets: pets, emitter: emitter, logger: logger}
-}
-
-func (uc *TreatmentUseCase) petName(ctx context.Context, petID string) string {
-	pet, err := uc.pets.GetByID(ctx, petID)
-	if err != nil || pet == nil {
-		return petID
+	if logger == nil {
+		logger = zap.NewNop()
 	}
-	return pet.Name
+	return &TreatmentUseCase{treatments: treatments, doses: doses, pets: pets, txRunner: txRunner, calendar: calendar, timezone: timezone, logger: logger}
 }
 
-// Create starts a treatment, generates doses, and emits treatment.doses_scheduled.
-// Returns the treatment and the generated doses.
+// Create starts a treatment and creates the corresponding calendar state.
 func (uc *TreatmentUseCase) Create(ctx context.Context, in service.CreateTreatmentInput) (*domain.Treatment, []domain.Dose, error) {
-	tr, err := uc.treatments.Create(ctx, in)
+	pet, err := uc.pets.GetByID(ctx, in.PetID)
 	if err != nil {
+		return nil, nil, fmt.Errorf("load pet %q: %w", in.PetID, err)
+	}
+	if pet.GoogleCalendarID == "" {
+		return nil, nil, fmt.Errorf("pet %q is missing google calendar id", in.PetID)
+	}
+
+	if in.EndedAt == nil {
+		return uc.createRecurringTreatment(ctx, pet, in)
+	}
+
+	var (
+		tr              *domain.Treatment
+		doses           []domain.Dose
+		createdEventIDs []string
+	)
+	err = uc.txRunner.WithinTx(ctx, func(_ *service.PetService, _ *service.VaccineService, treatments *service.TreatmentService, dosesSvc *service.DoseService) error {
+		createdTreatment, err := treatments.Create(ctx, in)
+		if err != nil {
+			return fmt.Errorf("create treatment: %w", err)
+		}
+		tr = createdTreatment
+		doses = dosesSvc.GenerateDoses(*tr, *tr.EndedAt)
+		for i := range doses {
+			eventID, err := uc.calendar.CreateEvent(ctx, pet.GoogleCalendarID, gcalendar.Event{
+				Title:       fmt.Sprintf("%d/%d %s", i+1, len(doses), tr.Name),
+				Description: fmt.Sprintf("Pet: %s", pet.Name),
+				StartTime:   doses[i].ScheduledFor,
+				EndTime:     doses[i].ScheduledFor,
+				ReminderMin: 0,
+				TimeZone:    uc.timezone,
+			})
+			if err != nil {
+				return fmt.Errorf("create dose calendar event %d for treatment %q: %w", i+1, tr.ID, err)
+			}
+			doses[i].GoogleCalendarEventID = eventID
+			createdEventIDs = append(createdEventIDs, eventID)
+		}
+		if err := dosesSvc.CreateBatch(ctx, doses); err != nil {
+			return fmt.Errorf("create treatment doses: %w", err)
+		}
+		return nil
+	})
+	if err != nil {
+		uc.compensateEvents(ctx, pet.GoogleCalendarID, createdEventIDs, tr)
 		return nil, nil, err
-	}
-	var upTo time.Time
-	if tr.EndedAt != nil {
-		upTo = *tr.EndedAt
-	} else {
-		upTo = time.Now().UTC().AddDate(0, 0, doseWindowDays)
-	}
-	doses := uc.doses.GenerateDoses(*tr, upTo)
-	if err := uc.doses.CreateBatch(ctx, doses); err != nil {
-		return nil, nil, err
-	}
-	if len(doses) > 0 {
-		uc.emitter.Emit(ctx, "treatment.doses_scheduled", treatmentDosesScheduledPayload{
-			PetID:         tr.PetID,
-			PetName:       uc.petName(ctx, tr.PetID),
-			TreatmentID:   tr.ID,
-			TreatmentName: tr.Name,
-			DosageAmount:  tr.DosageAmount,
-			DosageUnit:    tr.DosageUnit,
-			Route:         tr.Route,
-			IntervalHours: tr.IntervalHours,
-			Doses:         toDosePayloads(doses),
-		})
 	}
 	return tr, doses, nil
 }
@@ -103,63 +122,121 @@ func (uc *TreatmentUseCase) List(ctx context.Context, petID string) ([]domain.Tr
 	return ts, doseMap, nil
 }
 
-// Stop marks a treatment as stopped, deletes future doses, and emits treatment.stopped.
-func (uc *TreatmentUseCase) Stop(ctx context.Context, petID, treatmentID string) error {
-	tr, err := uc.treatments.GetByID(ctx, petID, treatmentID)
+func (uc *TreatmentUseCase) createRecurringTreatment(ctx context.Context, pet *domain.Pet, in service.CreateTreatmentInput) (*domain.Treatment, []domain.Dose, error) {
+	eventID, err := uc.calendar.CreateRecurringEvent(ctx, pet.GoogleCalendarID, gcalendar.Event{
+		Title:       in.Name,
+		Description: fmt.Sprintf("Pet: %s", pet.Name),
+		StartTime:   in.StartedAt,
+		EndTime:     in.StartedAt,
+		ReminderMin: 0,
+		TimeZone:    uc.timezone,
+	}, in.IntervalHours)
 	if err != nil {
-		return err
+		return nil, nil, fmt.Errorf("create recurring treatment event: %w", err)
 	}
-	now := time.Now().UTC()
-	if err := uc.treatments.Stop(ctx, petID, treatmentID); err != nil {
-		return err
-	}
-	deletedIDs, err := uc.doses.DeleteFutureDoses(ctx, treatmentID, now)
-	if err != nil {
-		return err
-	}
-	uc.emitter.Emit(ctx, "treatment.stopped", treatmentStoppedPayload{
-		PetID:          tr.PetID,
-		PetName:        uc.petName(ctx, tr.PetID),
-		TreatmentID:    tr.ID,
-		TreatmentName:  tr.Name,
-		StoppedAt:      now,
-		DeletedDoseIDs: deletedIDs,
+
+	in.GoogleCalendarEventID = eventID
+	var treatment *domain.Treatment
+	err = uc.txRunner.WithinTx(ctx, func(_ *service.PetService, _ *service.VaccineService, treatments *service.TreatmentService, _ *service.DoseService) error {
+		created, err := treatments.Create(ctx, in)
+		if err != nil {
+			return fmt.Errorf("create recurring treatment: %w", err)
+		}
+		treatment = created
+		return nil
 	})
-	return nil
-}
-
-// --- Payload types ---
-
-type dosePayload struct {
-	DoseID       string    `json:"dose_id"`
-	ScheduledFor time.Time `json:"scheduled_for"`
-}
-
-type treatmentDosesScheduledPayload struct {
-	PetID         string        `json:"pet_id"`
-	PetName       string        `json:"pet_name"`
-	TreatmentID   string        `json:"treatment_id"`
-	TreatmentName string        `json:"treatment_name"`
-	DosageAmount  float64       `json:"dosage_amount"`
-	DosageUnit    string        `json:"dosage_unit"`
-	Route         string        `json:"route"`
-	IntervalHours int           `json:"interval_hours"`
-	Doses         []dosePayload `json:"doses"`
-}
-
-type treatmentStoppedPayload struct {
-	PetID          string    `json:"pet_id"`
-	PetName        string    `json:"pet_name"`
-	TreatmentID    string    `json:"treatment_id"`
-	TreatmentName  string    `json:"treatment_name"`
-	StoppedAt      time.Time `json:"stopped_at"`
-	DeletedDoseIDs []string  `json:"deleted_dose_ids"`
-}
-
-func toDosePayloads(doses []domain.Dose) []dosePayload {
-	p := make([]dosePayload, len(doses))
-	for i, d := range doses {
-		p[i] = dosePayload{DoseID: d.ID, ScheduledFor: d.ScheduledFor}
+	if err != nil {
+		if delErr := uc.calendar.DeleteEvent(ctx, pet.GoogleCalendarID, eventID); delErr != nil {
+			uc.logger.Error("calendar compensation failed after recurring treatment create error",
+				zap.String("pet_id", pet.ID),
+				zap.String("calendar_id", pet.GoogleCalendarID),
+				zap.String("event_id", eventID),
+				zap.Error(delErr),
+			)
+		}
+		return nil, nil, err
 	}
-	return p
+	return treatment, nil, nil
+}
+
+// Stop marks a treatment as stopped and cleans up future calendar state.
+func (uc *TreatmentUseCase) Stop(ctx context.Context, petID, treatmentID string) error {
+	var (
+		pet             *domain.Pet
+		tr              *domain.Treatment
+		externalChanged bool
+	)
+	now := time.Now().UTC()
+	err := uc.txRunner.WithinTx(ctx, func(pets *service.PetService, _ *service.VaccineService, treatments *service.TreatmentService, doses *service.DoseService) error {
+		loadedPet, err := pets.GetByID(ctx, petID)
+		if err != nil {
+			return fmt.Errorf("load pet %q: %w", petID, err)
+		}
+		pet = loadedPet
+		loadedTreatment, err := treatments.GetByID(ctx, petID, treatmentID)
+		if err != nil {
+			return fmt.Errorf("load treatment %q: %w", treatmentID, err)
+		}
+		tr = loadedTreatment
+
+		if tr.EndedAt == nil {
+			if tr.GoogleCalendarEventID != "" {
+				if err := uc.calendar.StopRecurringEvent(ctx, pet.GoogleCalendarID, tr.GoogleCalendarEventID, now); err != nil {
+					return fmt.Errorf("stop recurring treatment event %q: %w", tr.GoogleCalendarEventID, err)
+				}
+				externalChanged = true
+			}
+			if err := treatments.Stop(ctx, petID, treatmentID); err != nil {
+				return fmt.Errorf("stop treatment %q: %w", treatmentID, err)
+			}
+			return nil
+		}
+
+		futureDoses, err := doses.ListFutureByTreatment(ctx, treatmentID, now)
+		if err != nil {
+			return fmt.Errorf("list future doses for treatment %q: %w", treatmentID, err)
+		}
+		for _, dose := range futureDoses {
+			if dose.GoogleCalendarEventID == "" {
+				continue
+			}
+			if err := uc.calendar.DeleteEvent(ctx, pet.GoogleCalendarID, dose.GoogleCalendarEventID); err != nil {
+				return fmt.Errorf("delete dose calendar event %q: %w", dose.GoogleCalendarEventID, err)
+			}
+			externalChanged = true
+		}
+		if err := treatments.Stop(ctx, petID, treatmentID); err != nil {
+			return fmt.Errorf("stop treatment %q: %w", treatmentID, err)
+		}
+		if err := doses.DeleteFutureByTreatment(ctx, treatmentID, now); err != nil {
+			return fmt.Errorf("delete future doses for treatment %q: %w", treatmentID, err)
+		}
+		return nil
+	})
+	if err != nil && externalChanged && errors.Is(err, ErrTxCommit) {
+		uc.logger.Error("treatment stop committed external change before local commit failed",
+			zap.String("pet_id", petID),
+			zap.String("calendar_id", pet.GoogleCalendarID),
+			zap.String("treatment_id", treatmentID),
+			zap.String("event_id", tr.GoogleCalendarEventID),
+			zap.Error(err),
+		)
+	}
+	return err
+}
+
+func (uc *TreatmentUseCase) compensateEvents(ctx context.Context, calendarID string, eventIDs []string, tr *domain.Treatment) {
+	for _, eventID := range eventIDs {
+		if delErr := uc.calendar.DeleteEvent(ctx, calendarID, eventID); delErr != nil {
+			fields := []zap.Field{
+				zap.String("calendar_id", calendarID),
+				zap.String("event_id", eventID),
+				zap.Error(delErr),
+			}
+			if tr != nil {
+				fields = append(fields, zap.String("treatment_id", tr.ID))
+			}
+			uc.logger.Error("calendar compensation failed after treatment create error", fields...)
+		}
+	}
 }

@@ -11,7 +11,6 @@ import (
 
 type mockDoseRepo struct {
 	created []domain.Dose
-	latest  *domain.Dose
 }
 
 func (m *mockDoseRepo) CreateBatch(_ context.Context, doses []domain.Dose) error {
@@ -21,14 +20,11 @@ func (m *mockDoseRepo) CreateBatch(_ context.Context, doses []domain.Dose) error
 func (m *mockDoseRepo) ListByTreatment(_ context.Context, _ string) ([]domain.Dose, error) {
 	return nil, nil
 }
-func (m *mockDoseRepo) DeleteFutureDoses(_ context.Context, _ string, _ time.Time) ([]string, error) {
+func (m *mockDoseRepo) ListFutureByTreatment(_ context.Context, _ string, _ time.Time) ([]domain.Dose, error) {
 	return nil, nil
 }
-func (m *mockDoseRepo) ListOpenEndedActiveTreatments(_ context.Context) ([]domain.Treatment, error) {
-	return nil, nil
-}
-func (m *mockDoseRepo) LatestDoseFor(_ context.Context, _ string) (*domain.Dose, error) {
-	return m.latest, nil
+func (m *mockDoseRepo) DeleteFutureByTreatment(_ context.Context, _ string, _ time.Time) error {
+	return nil
 }
 
 func TestDoseService_GenerateDoses_Finite(t *testing.T) {
@@ -83,25 +79,5 @@ func TestDoseService_GenerateDoses_EachHasUniqueID(t *testing.T) {
 			t.Errorf("duplicate dose ID: %s", d.ID)
 		}
 		ids[d.ID] = true
-	}
-}
-
-func TestDoseService_ExtendOpenEnded_StartsAfterLatest(t *testing.T) {
-	start := time.Date(2026, 4, 3, 8, 0, 0, 0, time.UTC)
-	latest := start.Add(24 * time.Hour)
-	repo := &mockDoseRepo{latest: &domain.Dose{ID: "d0", TreatmentID: "t1", ScheduledFor: latest}}
-	tr := domain.Treatment{ID: "t1", PetID: "p1", IntervalHours: 24, StartedAt: start}
-	svc := service.NewDoseService(repo)
-	windowEnd := start.Add(72 * time.Hour)
-	doses, err := svc.ExtendOpenEnded(context.Background(), tr, windowEnd)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	// Latest is at start+24h. Next should be start+48h, then start+72h is excluded (== windowEnd).
-	if len(doses) != 1 {
-		t.Errorf("got %d doses, want 1", len(doses))
-	}
-	if !doses[0].ScheduledFor.Equal(start.Add(48 * time.Hour)) {
-		t.Errorf("dose at %v, want %v", doses[0].ScheduledFor, start.Add(48*time.Hour))
 	}
 }

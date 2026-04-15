@@ -12,16 +12,17 @@ import (
 )
 
 type CreateTreatmentInput struct {
-	PetID         string
-	Name          string
-	DosageAmount  float64
-	DosageUnit    string
-	Route         string
-	IntervalHours int
-	StartedAt     time.Time
-	EndedAt       *time.Time
-	VetName       *string
-	Notes         *string
+	PetID                 string
+	Name                  string
+	DosageAmount          float64
+	DosageUnit            string
+	Route                 string
+	IntervalHours         int
+	StartedAt             time.Time
+	EndedAt               *time.Time
+	VetName               *string
+	Notes                 *string
+	GoogleCalendarEventID string
 }
 
 type TreatmentService struct {
@@ -50,18 +51,19 @@ func (s *TreatmentService) Create(ctx context.Context, in CreateTreatmentInput) 
 	}
 	now := time.Now().UTC()
 	return s.repo.Create(ctx, domain.Treatment{
-		ID:            uuid.New().String(),
-		PetID:         in.PetID,
-		Name:          in.Name,
-		DosageAmount:  in.DosageAmount,
-		DosageUnit:    in.DosageUnit,
-		Route:         in.Route,
-		IntervalHours: in.IntervalHours,
-		StartedAt:     in.StartedAt.UTC(),
-		EndedAt:       in.EndedAt,
-		VetName:       in.VetName,
-		Notes:         in.Notes,
-		CreatedAt:     now,
+		ID:                    uuid.New().String(),
+		PetID:                 in.PetID,
+		Name:                  in.Name,
+		DosageAmount:          in.DosageAmount,
+		DosageUnit:            in.DosageUnit,
+		Route:                 in.Route,
+		IntervalHours:         in.IntervalHours,
+		StartedAt:             in.StartedAt.UTC(),
+		EndedAt:               in.EndedAt,
+		VetName:               in.VetName,
+		Notes:                 in.Notes,
+		GoogleCalendarEventID: in.GoogleCalendarEventID,
+		CreatedAt:             now,
 	})
 }
 
