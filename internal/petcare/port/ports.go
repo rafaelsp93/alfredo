@@ -39,3 +39,10 @@ type DoseRepository interface {
 	ListFutureByTreatment(ctx context.Context, treatmentID string, after time.Time) ([]domain.Dose, error)
 	DeleteFutureByTreatment(ctx context.Context, treatmentID string, after time.Time) error
 }
+
+// ObservationRepository persists timestamped pet observation records.
+type ObservationRepository interface {
+	Create(ctx context.Context, observation domain.Observation) (*domain.Observation, error)
+	ListByPet(ctx context.Context, petID string) ([]domain.Observation, error)
+	GetByID(ctx context.Context, petID, observationID string) (*domain.Observation, error)
+}
