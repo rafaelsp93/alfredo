@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -11,8 +10,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/labstack/echo/v4"
-	echomw "github.com/labstack/echo/v4/middleware"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 
@@ -20,10 +17,7 @@ import (
 	"github.com/rafaelsoares/alfredo/internal/config"
 	"github.com/rafaelsoares/alfredo/internal/database"
 	"github.com/rafaelsoares/alfredo/internal/gcalendar"
-	pethttp "github.com/rafaelsoares/alfredo/internal/petcare/adapters/primary/http"
-	petmw "github.com/rafaelsoares/alfredo/internal/petcare/adapters/primary/http/middleware"
-	petcaresqlite "github.com/rafaelsoares/alfredo/internal/petcare/adapters/secondary/sqlite"
-	petsvc "github.com/rafaelsoares/alfredo/internal/petcare/service"
+	"github.com/rafaelsoares/alfredo/internal/httpserver"
 )
 
 var version = "dev"
@@ -83,68 +77,16 @@ func main() {
 		calendarAdapter = gcalendar.NewNoopAdapter(zapLogger)
 	}
 
-	// 6. Pet-care repositories
-	petRepo := petcaresqlite.NewPetRepository(db)
-	vaccineRepo := petcaresqlite.NewVaccineRepository(db)
-	treatmentRepo := petcaresqlite.NewTreatmentRepository(db)
-	doseRepo := petcaresqlite.NewDoseRepository(db)
-	txRunner := petcaresqlite.NewTxRunner(db)
-	dbChecker := database.NewChecker(db)
-
-	// 7. Pet-care services (pure CRUD — no side-effects)
-	petService := petsvc.NewPetService(petRepo)
-	vaccineService := petsvc.NewVaccineService(vaccineRepo, petRepo)
-	treatmentService := petsvc.NewTreatmentService(treatmentRepo)
-	doseService := petsvc.NewDoseService(doseRepo)
-
-	// 8. Use Cases (orchestrate domain + calendar integration)
-	petUC := app.NewPetUseCase(petService, txRunner, calendarAdapter, zapLogger)
-	vaccineUC := app.NewVaccineUseCase(vaccineService, petService, txRunner, calendarAdapter, loc.String(), zapLogger)
-	treatmentUC := app.NewTreatmentUseCase(treatmentService, doseService, petService, txRunner, calendarAdapter, loc.String(), zapLogger)
-
-	// 9. Health aggregator
-	healthAgg := app.NewHealthAggregator(map[string]app.HealthPinger{
-		"sqlite": dbChecker,
+	e, err := httpserver.New(httpserver.Config{
+		DB:       db,
+		Calendar: calendarAdapter,
+		APIKey:   cfg.Auth.APIKey,
+		Location: loc,
+		Logger:   zapLogger,
 	})
-	healthHandler := pethttp.NewHealthHTTPHandler(healthAgg)
-
-	// 10. HTTP handlers
-	petHandler := pethttp.NewPetHandler(petUC)
-	vaccineHandler := pethttp.NewVaccineHandler(vaccineUC, loc)
-	treatmentHandler := pethttp.NewTreatmentHandler(treatmentUC, loc)
-
-	// 11. Echo instance with global middleware
-	e := echo.New()
-	e.HideBanner = true
-	e.HidePort = true
-	e.Use(petmw.RequestLogger(zapLogger))
-	e.Use(echomw.Recover())
-	e.Use(echomw.BodyLimit("1M"))
-
-	// Custom error handler: return consistent JSON and avoid leaking internal details.
-	e.HTTPErrorHandler = func(err error, c echo.Context) {
-		code := http.StatusInternalServerError
-		msg := "internal_error"
-		var he *echo.HTTPError
-		if errors.As(err, &he) {
-			code = he.Code
-			msg = http.StatusText(he.Code)
-		}
-		if !c.Response().Committed {
-			_ = c.JSON(code, map[string]string{"error": msg})
-		}
+	if err != nil {
+		zapLogger.Fatal("server wiring failed", zap.Error(err))
 	}
-
-	// 12. Public routes — no auth (health checks from Traefik/Docker)
-	public := e.Group("/api/v1")
-	public.GET("/health", healthHandler.Health)
-
-	// 13. Protected routes — API key required
-	protected := e.Group("/api/v1")
-	protected.Use(petmw.APIKeyAuth(cfg.Auth.APIKey))
-	petHandler.Register(protected)
-	vaccineHandler.Register(protected)
-	treatmentHandler.Register(protected)
 
 	// 14. Start server with graceful shutdown
 	addr := fmt.Sprintf("%s:%d", cfg.Server.Host, cfg.Server.Port)

@@ -24,8 +24,11 @@ jobs:
         with:
           version: v2.11.4
 
-      - name: Run tests
-        run: go test ./internal/...
+      - name: Run unit tests
+        run: make test
+
+      - name: Run integration tests
+        run: make integration-test
 
   build:
     runs-on: ubuntu-latest

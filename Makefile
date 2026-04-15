@@ -1,4 +1,4 @@
-.PHONY: run build test lint tidy generate stop
+.PHONY: run build test integration-test lint tidy generate stop
 
 BINARY  := ./alfredo
 VERSION := $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
@@ -16,6 +16,9 @@ lint:
 
 test:
 	go test ./internal/...
+
+integration-test:
+	go test -count=1 ./tests/integration/...
 
 tidy:
 	go mod tidy
