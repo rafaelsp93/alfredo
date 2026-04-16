@@ -40,6 +40,15 @@ type DoseRepository interface {
 	DeleteFutureByTreatment(ctx context.Context, treatmentID string, after time.Time) error
 }
 
+// AppointmentRepository persists and retrieves Appointment records.
+type AppointmentRepository interface {
+	Create(ctx context.Context, a domain.Appointment) (*domain.Appointment, error)
+	GetByID(ctx context.Context, petID, appointmentID string) (*domain.Appointment, error)
+	List(ctx context.Context, petID string) ([]domain.Appointment, error)
+	Update(ctx context.Context, a domain.Appointment) (*domain.Appointment, error)
+	Delete(ctx context.Context, petID, appointmentID string) error
+}
+
 // ObservationRepository persists timestamped pet observation records.
 type ObservationRepository interface {
 	Create(ctx context.Context, observation domain.Observation) (*domain.Observation, error)

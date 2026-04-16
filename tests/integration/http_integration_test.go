@@ -150,6 +150,13 @@ func (c *recordingCalendar) CreateEvent(_ context.Context, calendarID string, ev
 	return id, nil
 }
 
+func (c *recordingCalendar) UpdateEvent(_ context.Context, calendarID string, eventID string, event gcalendar.Event) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.createdEvents = append(c.createdEvents, createdEvent{CalendarID: calendarID, Event: event, ID: eventID})
+	return nil
+}
+
 func (c *recordingCalendar) CreateRecurringEvent(_ context.Context, calendarID string, event gcalendar.Event, intervalHours int) (string, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()

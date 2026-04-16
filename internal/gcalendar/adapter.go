@@ -73,6 +73,23 @@ func (a *Adapter) CreateEvent(ctx context.Context, calendarID string, event Even
 	return inserted.Id, nil
 }
 
+func (a *Adapter) UpdateEvent(ctx context.Context, calendarID string, eventID string, event Event) error {
+	if calendarID == "" || eventID == "" {
+		return fmt.Errorf("update event: calendar and event ids are required")
+	}
+	gEvent, err := toGoogleEvent(event, 0)
+	if err != nil {
+		return err
+	}
+	if event.Location == "" {
+		gEvent.ForceSendFields = append(gEvent.ForceSendFields, "Location")
+	}
+	if _, err := a.service.Events.Patch(calendarID, eventID, gEvent).Context(ctx).Do(); err != nil {
+		return fmt.Errorf("update event %q on calendar %q: %w", eventID, calendarID, err)
+	}
+	return nil
+}
+
 func (a *Adapter) CreateRecurringEvent(ctx context.Context, calendarID string, event Event, intervalHours int) (string, error) {
 	if intervalHours <= 0 {
 		return "", fmt.Errorf("create recurring event: interval_hours must be > 0")
@@ -128,8 +145,10 @@ func (a *Adapter) StopRecurringEvent(ctx context.Context, calendarID string, eve
 	if !foundRule {
 		return fmt.Errorf("stop recurring event %q: recurrence rule not found", eventID)
 	}
-	ev.Recurrence = updated
-	if _, err := a.service.Events.Update(calendarID, eventID, ev).Context(ctx).Do(); err != nil {
+	_, err = a.service.Events.Patch(calendarID, eventID, &calendar.Event{
+		Recurrence: updated,
+	}).Context(ctx).Do()
+	if err != nil {
 		return fmt.Errorf("update recurring event %q: %w", eventID, err)
 	}
 	return nil
@@ -171,6 +190,9 @@ func toGoogleEvent(event Event, intervalHours int) (*calendar.Event, error) {
 				{Method: "popup", Minutes: int64(event.ReminderMin), ForceSendFields: []string{"Minutes"}},
 			},
 		},
+	}
+	if event.Location != "" {
+		gEvent.Location = event.Location
 	}
 	if intervalHours > 0 {
 		gEvent.Recurrence = []string{fmt.Sprintf("RRULE:FREQ=HOURLY;INTERVAL=%d", intervalHours)}
