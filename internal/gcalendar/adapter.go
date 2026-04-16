@@ -73,6 +73,23 @@ func (a *Adapter) CreateEvent(ctx context.Context, calendarID string, event Even
 	return inserted.Id, nil
 }
 
+func (a *Adapter) UpdateEvent(ctx context.Context, calendarID string, eventID string, event Event) error {
+	if calendarID == "" || eventID == "" {
+		return fmt.Errorf("update event: calendar and event ids are required")
+	}
+	gEvent, err := toGoogleEvent(event, 0)
+	if err != nil {
+		return err
+	}
+	if event.Location == "" {
+		gEvent.ForceSendFields = append(gEvent.ForceSendFields, "Location")
+	}
+	if _, err := a.service.Events.Patch(calendarID, eventID, gEvent).Context(ctx).Do(); err != nil {
+		return fmt.Errorf("update event %q on calendar %q: %w", eventID, calendarID, err)
+	}
+	return nil
+}
+
 func (a *Adapter) CreateRecurringEvent(ctx context.Context, calendarID string, event Event, intervalHours int) (string, error) {
 	if intervalHours <= 0 {
 		return "", fmt.Errorf("create recurring event: interval_hours must be > 0")

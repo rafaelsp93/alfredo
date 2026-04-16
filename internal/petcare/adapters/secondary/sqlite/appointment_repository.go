@@ -25,7 +25,7 @@ func (r *AppointmentRepository) Create(ctx context.Context, a domain.Appointment
 		a.CreatedAt.Format(time.RFC3339),
 	)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("insert appointment %q: %w", a.ID, err)
 	}
 	return &a, nil
 }
@@ -38,7 +38,10 @@ func (r *AppointmentRepository) GetByID(ctx context.Context, petID, appointmentI
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, domain.ErrNotFound
 	}
-	return a, err
+	if err != nil {
+		return nil, fmt.Errorf("select appointment %q for pet %q: %w", appointmentID, petID, err)
+	}
+	return a, nil
 }
 
 func (r *AppointmentRepository) List(ctx context.Context, petID string) ([]domain.Appointment, error) {
@@ -46,7 +49,7 @@ func (r *AppointmentRepository) List(ctx context.Context, petID string) ([]domai
 		SELECT id, pet_id, type, scheduled_at, provider, location, notes, google_calendar_event_id, created_at
 		FROM appointments WHERE pet_id = ? ORDER BY scheduled_at`, petID)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("query appointments for pet %q: %w", petID, err)
 	}
 	defer rows.Close() //nolint:errcheck
 
@@ -54,11 +57,14 @@ func (r *AppointmentRepository) List(ctx context.Context, petID string) ([]domai
 	for rows.Next() {
 		a, err := scanAppointment(rows)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("scan appointment for pet %q: %w", petID, err)
 		}
 		as = append(as, *a)
 	}
-	return as, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate appointments for pet %q: %w", petID, err)
+	}
+	return as, nil
 }
 
 func (r *AppointmentRepository) Update(ctx context.Context, a domain.Appointment) (*domain.Appointment, error) {
@@ -70,7 +76,7 @@ func (r *AppointmentRepository) Update(ctx context.Context, a domain.Appointment
 		a.ID, a.PetID,
 	)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("update appointment %q for pet %q: %w", a.ID, a.PetID, err)
 	}
 	if n, _ := res.RowsAffected(); n == 0 {
 		return nil, domain.ErrNotFound
@@ -81,7 +87,7 @@ func (r *AppointmentRepository) Update(ctx context.Context, a domain.Appointment
 func (r *AppointmentRepository) Delete(ctx context.Context, petID, appointmentID string) error {
 	res, err := r.db.ExecContext(ctx, `DELETE FROM appointments WHERE id = ? AND pet_id = ?`, appointmentID, petID)
 	if err != nil {
-		return err
+		return fmt.Errorf("delete appointment %q for pet %q: %w", appointmentID, petID, err)
 	}
 	if n, _ := res.RowsAffected(); n == 0 {
 		return domain.ErrNotFound

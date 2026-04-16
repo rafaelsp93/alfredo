@@ -42,6 +42,15 @@ func (a *NoopAdapter) CreateEvent(_ context.Context, calendarID string, event Ev
 	return id, nil
 }
 
+func (a *NoopAdapter) UpdateEvent(_ context.Context, calendarID string, eventID string, event Event) error {
+	a.logger.Info("gcalendar noop update event",
+		zap.String("calendar_id", calendarID),
+		zap.String("event_id", eventID),
+		zap.String("title", event.Title),
+	)
+	return nil
+}
+
 func (a *NoopAdapter) CreateRecurringEvent(_ context.Context, calendarID string, event Event, intervalHours int) (string, error) {
 	id := deterministicID("recurring", calendarID, event.Title, event.StartTime.Format(time.RFC3339Nano), event.EndTime.Format(time.RFC3339Nano), event.TimeZone, fmt.Sprintf("%d", intervalHours))
 	a.logger.Info("gcalendar noop create recurring event",

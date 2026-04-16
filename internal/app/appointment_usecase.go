@@ -100,8 +100,44 @@ func (uc *AppointmentUseCase) List(ctx context.Context, petID string) ([]domain.
 }
 
 func (uc *AppointmentUseCase) Update(ctx context.Context, petID, appointmentID string, in service.UpdateAppointmentInput) (*domain.Appointment, error) {
+	var (
+		previous *domain.Appointment
+		pet      *domain.Pet
+	)
+	if in.ScheduledAt != nil || in.Location != nil {
+		var err error
+		previous, err = uc.appointments.GetByID(ctx, petID, appointmentID)
+		if err != nil {
+			return nil, fmt.Errorf("load appointment %q: %w", appointmentID, err)
+		}
+		pet, err = uc.pets.GetByID(ctx, petID)
+		if err != nil {
+			return nil, fmt.Errorf("load pet %q: %w", petID, err)
+		}
+		updated := *previous
+		if in.ScheduledAt != nil {
+			updated.ScheduledAt = *in.ScheduledAt
+		}
+		if in.Location != nil {
+			updated.Location = in.Location
+		}
+		if err := uc.calendar.UpdateEvent(ctx, pet.GoogleCalendarID, previous.GoogleCalendarEventID, uc.appointmentCalendarEvent(pet, &updated)); err != nil {
+			return nil, fmt.Errorf("update appointment calendar event %q: %w", previous.GoogleCalendarEventID, err)
+		}
+	}
+
 	appt, err := uc.appointments.Update(ctx, petID, appointmentID, in)
 	if err != nil {
+		if previous != nil {
+			if delErr := uc.calendar.UpdateEvent(ctx, pet.GoogleCalendarID, previous.GoogleCalendarEventID, uc.appointmentCalendarEvent(pet, previous)); delErr != nil {
+				uc.logger.Error("calendar compensation failed after appointment update error",
+					zap.String("pet_id", petID),
+					zap.String("calendar_id", pet.GoogleCalendarID),
+					zap.String("event_id", previous.GoogleCalendarEventID),
+					zap.Error(delErr),
+				)
+			}
+		}
 		return nil, fmt.Errorf("update appointment %q: %w", appointmentID, err)
 	}
 	return appt, nil
@@ -145,6 +181,22 @@ func (uc *AppointmentUseCase) sendTelegram(ctx context.Context, msg telegram.Mes
 	if err := uc.telegram.Send(ctx, msg); err != nil {
 		allFields := append([]zap.Field{zap.Error(err)}, fields...)
 		uc.logger.Warn("telegram notification failed", allFields...)
+	}
+}
+
+func (uc *AppointmentUseCase) appointmentCalendarEvent(pet *domain.Pet, appt *domain.Appointment) gcalendar.Event {
+	location := ""
+	if appt.Location != nil {
+		location = *appt.Location
+	}
+	return gcalendar.Event{
+		Title:       appointmentTypeLabel(appt.Type),
+		Location:    location,
+		Description: fmt.Sprintf("Pet: %s", pet.Name),
+		StartTime:   appt.ScheduledAt,
+		EndTime:     appt.ScheduledAt.Add(time.Hour),
+		ReminderMin: 24 * 60,
+		TimeZone:    uc.timezone,
 	}
 }
 

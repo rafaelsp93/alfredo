@@ -46,6 +46,7 @@ type calendarFake struct {
 	deletedCalendars  []string
 	deletedEvents     []string
 	createdEvents     []gcalendar.Event
+	updatedEvents     []gcalendar.Event
 	createEventCalls  int
 }
 
@@ -64,6 +65,10 @@ func (c *calendarFake) CreateEvent(_ context.Context, _ string, event gcalendar.
 	id := c.createEventIDs[c.createEventCalls]
 	c.createEventCalls++
 	return id, nil
+}
+func (c *calendarFake) UpdateEvent(_ context.Context, _ string, _ string, event gcalendar.Event) error {
+	c.updatedEvents = append(c.updatedEvents, event)
+	return nil
 }
 func (c *calendarFake) CreateRecurringEvent(context.Context, string, gcalendar.Event, int) (string, error) {
 	return c.createRecurringID, nil

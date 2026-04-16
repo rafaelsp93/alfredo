@@ -21,6 +21,7 @@ type appointmentServiceFake struct {
 	updated   *domain.Appointment
 	createErr error
 	getErr    error
+	updateErr error
 	deleteErr error
 	stored    *domain.Appointment // pre-loaded for GetByID/Delete
 }
@@ -59,6 +60,9 @@ func (f *appointmentServiceFake) List(_ context.Context, _ string) ([]domain.App
 }
 
 func (f *appointmentServiceFake) Update(_ context.Context, _, _ string, in service.UpdateAppointmentInput) (*domain.Appointment, error) {
+	if f.updateErr != nil {
+		return nil, f.updateErr
+	}
 	if f.stored == nil {
 		return nil, domain.ErrNotFound
 	}
@@ -287,8 +291,78 @@ func TestAppointmentUseCase_Update_success(t *testing.T) {
 	if cal.createEventCalls != 0 {
 		t.Fatal("expected no calendar calls on Update")
 	}
+	if len(cal.updatedEvents) != 1 {
+		t.Fatalf("expected 1 calendar update on reschedule, got %d", len(cal.updatedEvents))
+	}
 	if len(tg.messages) != 0 {
 		t.Fatalf("expected no telegram messages on Update, got %d", len(tg.messages))
+	}
+}
+
+func TestAppointmentUseCase_Update_notesOnlySkipsCalendar(t *testing.T) {
+	pet := basePet()
+	cal := &calendarFake{}
+	tg := &telegramFake{}
+	apptSvc := &appointmentServiceFake{stored: baseAppt()}
+	uc := newTestAppointmentUC(apptSvc, cal, tg, pet)
+
+	notes := "updated notes"
+	_, err := uc.Update(context.Background(), "p1", "appt-1", service.UpdateAppointmentInput{
+		Notes: &notes,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(cal.updatedEvents) != 0 {
+		t.Fatalf("expected no calendar update for notes-only patch, got %d", len(cal.updatedEvents))
+	}
+}
+
+func TestAppointmentUseCase_Update_calendarFailureSkipsDB(t *testing.T) {
+	pet := basePet()
+	cal := &failingCalendarFake{updateEventErr: errors.New("calendar update failed")}
+	tg := &telegramFake{}
+	apptSvc := &appointmentServiceFake{stored: baseAppt()}
+	uc := app.NewAppointmentUseCase(apptSvc, &fakePetGetterWithCalendar{pet: pet}, cal, tg, "America/Sao_Paulo", zap.NewNop())
+
+	newTime := time.Date(2026, 5, 2, 11, 0, 0, 0, time.UTC)
+	errAppt, err := uc.Update(context.Background(), "p1", "appt-1", service.UpdateAppointmentInput{
+		ScheduledAt: &newTime,
+	})
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if errAppt != nil {
+		t.Fatalf("expected nil appointment on error, got %#v", errAppt)
+	}
+	if apptSvc.updated != nil {
+		t.Fatal("expected DB update to be skipped when calendar update fails")
+	}
+}
+
+func TestAppointmentUseCase_Update_dbFailureCompensatesCalendar(t *testing.T) {
+	pet := basePet()
+	cal := &calendarFake{}
+	tg := &telegramFake{}
+	dbErr := errors.New("db update failed")
+	apptSvc := &appointmentServiceFake{stored: baseAppt(), updateErr: dbErr}
+	uc := newTestAppointmentUC(apptSvc, cal, tg, pet)
+
+	newTime := time.Date(2026, 5, 2, 11, 0, 0, 0, time.UTC)
+	_, err := uc.Update(context.Background(), "p1", "appt-1", service.UpdateAppointmentInput{
+		ScheduledAt: &newTime,
+	})
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if !errors.Is(err, dbErr) {
+		t.Fatalf("expected db error, got %v", err)
+	}
+	if len(cal.updatedEvents) != 2 {
+		t.Fatalf("expected calendar update and compensation, got %d updates", len(cal.updatedEvents))
+	}
+	if !cal.updatedEvents[1].StartTime.Equal(baseAppt().ScheduledAt) {
+		t.Fatalf("expected compensation to restore original time, got %v", cal.updatedEvents[1].StartTime)
 	}
 }
 
@@ -331,6 +405,7 @@ func TestAppointmentUseCase_List_empty(t *testing.T) {
 // failingCalendarFake returns errors for CreateEvent or DeleteEvent.
 type failingCalendarFake struct {
 	createEventErr error
+	updateEventErr error
 	deleteEventErr error
 }
 
@@ -340,6 +415,9 @@ func (f *failingCalendarFake) CreateCalendar(context.Context, string) (string, e
 func (f *failingCalendarFake) DeleteCalendar(context.Context, string) error { return nil }
 func (f *failingCalendarFake) CreateEvent(_ context.Context, _ string, _ gcalendar.Event) (string, error) {
 	return "", f.createEventErr
+}
+func (f *failingCalendarFake) UpdateEvent(_ context.Context, _, _ string, _ gcalendar.Event) error {
+	return f.updateEventErr
 }
 func (f *failingCalendarFake) DeleteEvent(_ context.Context, _, _ string) error {
 	return f.deleteEventErr
@@ -363,6 +441,9 @@ func (f *failCompensationCalendarFake) CreateCalendar(context.Context, string) (
 func (f *failCompensationCalendarFake) DeleteCalendar(context.Context, string) error { return nil }
 func (f *failCompensationCalendarFake) CreateEvent(_ context.Context, _ string, _ gcalendar.Event) (string, error) {
 	return f.createEventID, nil
+}
+func (f *failCompensationCalendarFake) UpdateEvent(_ context.Context, _, _ string, _ gcalendar.Event) error {
+	return nil
 }
 func (f *failCompensationCalendarFake) DeleteEvent(_ context.Context, _, _ string) error {
 	return f.deleteEventErr
