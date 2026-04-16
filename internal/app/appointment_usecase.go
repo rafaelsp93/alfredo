@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"go.uber.org/zap"
 
@@ -56,7 +57,7 @@ func (uc *AppointmentUseCase) Create(ctx context.Context, in service.CreateAppoi
 		Location:    location,
 		Description: fmt.Sprintf("Pet: %s", pet.Name),
 		StartTime:   in.ScheduledAt,
-		EndTime:     in.ScheduledAt,
+		EndTime:     in.ScheduledAt.Add(time.Hour),
 		ReminderMin: 24 * 60,
 		TimeZone:    uc.timezone,
 	})

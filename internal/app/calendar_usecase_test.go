@@ -3,6 +3,7 @@ package app_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -57,6 +58,9 @@ func (c *calendarFake) DeleteCalendar(_ context.Context, calendarID string) erro
 }
 func (c *calendarFake) CreateEvent(_ context.Context, _ string, event gcalendar.Event) (string, error) {
 	c.createdEvents = append(c.createdEvents, event)
+	if c.createEventCalls >= len(c.createEventIDs) {
+		return "", fmt.Errorf("calendarFake: unexpected CreateEvent call %d", c.createEventCalls)
+	}
 	id := c.createEventIDs[c.createEventCalls]
 	c.createEventCalls++
 	return id, nil
