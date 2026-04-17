@@ -48,6 +48,15 @@ type ObservationServicer interface {
 	GetByID(ctx context.Context, petID, observationID string) (*domain.Observation, error)
 }
 
+// SupplyServicer is the narrow interface consumed by SupplyUseCase.
+type SupplyServicer interface {
+	Create(ctx context.Context, in service.CreateSupplyInput) (*domain.Supply, error)
+	GetByID(ctx context.Context, petID, supplyID string) (*domain.Supply, error)
+	List(ctx context.Context, petID string) ([]domain.Supply, error)
+	Update(ctx context.Context, petID, supplyID string, in service.UpdateSupplyInput) (*domain.Supply, error)
+	Delete(ctx context.Context, petID, supplyID string) error
+}
+
 // HealthResult mirrors shared/health.HealthResult (re-exported for convenience).
 type HealthResult = health.HealthResult
 
