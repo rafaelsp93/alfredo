@@ -18,11 +18,16 @@ import (
 )
 
 const agentSystemPrompt = `Você é o Alfredo, assistente pessoal do Rafael para cuidados com os pets dele.
-Sempre responda em português brasileiro de forma curta, direta e natural.
+Esta é uma interação de uma única resposta: nunca faça perguntas, nunca peça esclarecimentos, nunca proponha próximos passos e nunca tente continuar a conversa.
+Sempre responda em português brasileiro de forma curta, direta e assertiva.
 Use as ferramentas disponíveis para registrar ou consultar informações sobre os pets.
 Para qualquer operação que envolva um pet específico, primeiro chame list_pets para resolver o identificador correto a partir do nome falado pelo Rafael.
-Nunca invente identificadores. Se o pedido do Rafael for ambíguo ou estiver faltando informação essencial, retorne uma resposta curta pedindo esclarecimento em vez de chamar uma ferramenta.
-Ao concluir uma ação, confirme brevemente o que foi feito, incluindo o nome do pet e a data/hora relevantes quando aplicável.`
+Trate "banho", "banho e tosa", "tosa" e "grooming" como grooming/banho e tosa.
+Se o Rafael perguntar quando foi o banho, quando foi a tosa ou quando foi a última consulta, consulte list_appointments.
+Se o Rafael quiser marcar banho e tosa ou agendar grooming, use schedule_appointment com type=grooming.
+Se o Rafael disser para registrar ou anotar uma observação, use log_observation.
+Nunca invente identificadores.
+Se o pedido do Rafael estiver ambíguo ou faltar informação essencial, responda apenas que não conseguiu concluir o pedido.`
 
 type AgentRouter interface {
 	Execute(
@@ -579,21 +584,31 @@ func errorToolResult(call agentdomain.ToolCall, err error) agentdomain.ToolResul
 
 func buildAgentTools() []agentdomain.Tool {
 	return []agentdomain.Tool{
-		tool("list_pets", "List all pets Rafael has registered.", objectSchema(nil, nil)),
-		tool("get_pet", "Get a pet by pet_id.", objectSchema(properties("pet_id", "string"), []string{"pet_id"})),
-		tool("list_vaccines", "List vaccines for a pet.", objectSchema(properties("pet_id", "string"), []string{"pet_id"})),
-		tool("list_treatments", "List treatments and doses for a pet.", objectSchema(properties("pet_id", "string"), []string{"pet_id"})),
-		tool("list_appointments", "List appointments for a pet.", objectSchema(properties("pet_id", "string"), []string{"pet_id"})),
-		tool("list_observations", "List observations for a pet.", objectSchema(properties("pet_id", "string"), []string{"pet_id"})),
-		tool("list_supplies", "List supplies for a pet.", objectSchema(properties("pet_id", "string"), []string{"pet_id"})),
-		tool("get_supply", "Get a supply by pet_id and supply_id.", objectSchema(properties("pet_id", "string", "supply_id", "string"), []string{"pet_id", "supply_id"})),
-		tool("log_observation", "Create an observation for a pet.", objectSchema(properties("pet_id", "string", "observed_at", "string", "description", "string"), []string{"pet_id", "observed_at", "description"})),
-		tool("record_vaccine", "Record a vaccine for a pet.", objectSchema(properties("pet_id", "string", "name", "string", "date", "string", "recurrence_days", "integer", "vet_name", "string", "batch_number", "string", "notes", "string"), []string{"pet_id", "name", "date"})),
-		tool("schedule_appointment", "Schedule a pet appointment.", objectSchema(properties("pet_id", "string", "type", "string", "scheduled_at", "string", "provider", "string", "location", "string", "notes", "string"), []string{"pet_id", "type", "scheduled_at"})),
-		tool("start_treatment", "Start a pet treatment.", objectSchema(properties("pet_id", "string", "name", "string", "dosage_amount", "number", "dosage_unit", "string", "route", "string", "interval_hours", "integer", "started_at", "string", "ended_at", "string", "vet_name", "string", "notes", "string"), []string{"pet_id", "name", "dosage_amount", "dosage_unit", "route", "interval_hours", "started_at"})),
-		tool("reschedule_appointment", "Reschedule an existing appointment.", objectSchema(properties("pet_id", "string", "appointment_id", "string", "scheduled_at", "string"), []string{"pet_id", "appointment_id", "scheduled_at"})),
-		tool("create_supply", "Create a per-pet supply record.", objectSchema(properties("pet_id", "string", "name", "string", "last_purchased_at", "string", "estimated_days_supply", "integer", "notes", "string"), []string{"pet_id", "name", "last_purchased_at", "estimated_days_supply"})),
-		tool("update_supply", "Update a per-pet supply record.", objectSchema(properties("pet_id", "string", "supply_id", "string", "name", "string", "last_purchased_at", "string", "estimated_days_supply", "integer", "notes", "string"), []string{"pet_id", "supply_id"})),
+		tool("list_pets", "List every pet Rafael has registered.", objectSchema(nil, nil)),
+		tool("get_pet", "Get one pet by pet_id.", objectSchema(properties("pet_id", "string"), []string{"pet_id"})),
+		tool("list_vaccines", "List vaccine records for one pet.", objectSchema(properties("pet_id", "string"), []string{"pet_id"})),
+		tool("list_treatments", "List treatments and dose events for one pet.", objectSchema(properties("pet_id", "string"), []string{"pet_id"})),
+		tool("list_appointments", "List a pet's appointment history, including vet visits and grooming sessions such as banho, banho e tosa, tosa, or grooming. Use it for questions like quando foi o banho or quando foi a última consulta.", objectSchema(properties("pet_id", "string"), []string{"pet_id"})),
+		tool("list_observations", "List observation history for one pet.", objectSchema(properties("pet_id", "string"), []string{"pet_id"})),
+		tool("list_supplies", "List supply records for one pet.", objectSchema(properties("pet_id", "string"), []string{"pet_id"})),
+		tool("get_supply", "Get one supply record by pet_id and supply_id.", objectSchema(properties("pet_id", "string", "supply_id", "string"), []string{"pet_id", "supply_id"})),
+		tool("log_observation", "Create a new observation entry for one pet.", objectSchema(properties("pet_id", "string", "observed_at", "string", "description", "string"), []string{"pet_id", "observed_at", "description"})),
+		tool("record_vaccine", "Record a vaccine administration for one pet.", objectSchema(properties("pet_id", "string", "name", "string", "date", "string", "recurrence_days", "integer", "vet_name", "string", "batch_number", "string", "notes", "string"), []string{"pet_id", "name", "date"})),
+		tool("schedule_appointment", "Schedule a pet appointment. Use for vet visits and grooming sessions such as banho, banho e tosa, tosa, or grooming.", objectSchema(map[string]any{
+			"pet_id": map[string]any{"type": "string"},
+			"type": map[string]any{
+				"type":        "string",
+				"description": "Use vet for consulta veterinária, grooming for banho, banho e tosa, tosa, or grooming, and other for any other appointment.",
+			},
+			"scheduled_at": map[string]any{"type": "string"},
+			"provider":     map[string]any{"type": "string"},
+			"location":     map[string]any{"type": "string"},
+			"notes":        map[string]any{"type": "string"},
+		}, []string{"pet_id", "type", "scheduled_at"})),
+		tool("start_treatment", "Start a pet treatment and create its dose schedule.", objectSchema(properties("pet_id", "string", "name", "string", "dosage_amount", "number", "dosage_unit", "string", "route", "string", "interval_hours", "integer", "started_at", "string", "ended_at", "string", "vet_name", "string", "notes", "string"), []string{"pet_id", "name", "dosage_amount", "dosage_unit", "route", "interval_hours", "started_at"})),
+		tool("reschedule_appointment", "Move an existing appointment to a new time.", objectSchema(properties("pet_id", "string", "appointment_id", "string", "scheduled_at", "string"), []string{"pet_id", "appointment_id", "scheduled_at"})),
+		tool("create_supply", "Create a supply record for one pet.", objectSchema(properties("pet_id", "string", "name", "string", "last_purchased_at", "string", "estimated_days_supply", "integer", "notes", "string"), []string{"pet_id", "name", "last_purchased_at", "estimated_days_supply"})),
+		tool("update_supply", "Update a supply record for one pet.", objectSchema(properties("pet_id", "string", "supply_id", "string", "name", "string", "last_purchased_at", "string", "estimated_days_supply", "integer", "notes", "string"), []string{"pet_id", "supply_id"})),
 	}
 }
 

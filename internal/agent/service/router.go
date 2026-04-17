@@ -15,10 +15,10 @@ import (
 )
 
 const (
-	IterationCapReply = "Desculpe, não consegui entender. Pode reformular?"
-	TimeoutReply      = "Demorei demais. Tente novamente."
-	LLMErrorReply     = "Desculpe, não consegui processar agora. Tente novamente."
-	ToolErrorReply    = "Desculpe, não consegui executar esse pedido. Pode reformular?"
+	IterationCapReply = "Desculpe, não consegui entender."
+	TimeoutReply      = "Demorei demais."
+	LLMErrorReply     = "Desculpe, não consegui processar agora."
+	ToolErrorReply    = "Desculpe, não consegui executar esse pedido."
 )
 
 type RouterConfig struct {
