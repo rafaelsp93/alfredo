@@ -55,3 +55,12 @@ type ObservationRepository interface {
 	ListByPet(ctx context.Context, petID string) ([]domain.Observation, error)
 	GetByID(ctx context.Context, petID, observationID string) (*domain.Observation, error)
 }
+
+// SupplyRepository persists per-pet consumable supply records.
+type SupplyRepository interface {
+	Create(ctx context.Context, supply domain.Supply) (*domain.Supply, error)
+	GetByID(ctx context.Context, petID, supplyID string) (*domain.Supply, error)
+	List(ctx context.Context, petID string) ([]domain.Supply, error)
+	Update(ctx context.Context, supply domain.Supply) (*domain.Supply, error)
+	Delete(ctx context.Context, petID, supplyID string) error
+}

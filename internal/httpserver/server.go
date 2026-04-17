@@ -57,6 +57,7 @@ func New(cfg Config) (*echo.Echo, error) {
 	txRunner := petcaresqlite.NewTxRunner(cfg.DB)
 
 	appointmentRepo := petcaresqlite.NewAppointmentRepository(cfg.DB)
+	supplyRepo := petcaresqlite.NewSupplyRepository(cfg.DB)
 
 	petService := petsvc.NewPetService(petRepo)
 	vaccineService := petsvc.NewVaccineService(vaccineRepo, petRepo)
@@ -64,12 +65,14 @@ func New(cfg Config) (*echo.Echo, error) {
 	doseService := petsvc.NewDoseService(doseRepo)
 	appointmentService := petsvc.NewAppointmentService(appointmentRepo)
 	observationService := petsvc.NewObservationService(observationRepo)
+	supplyService := petsvc.NewSupplyService(supplyRepo)
 
 	petUC := app.NewPetUseCase(petService, txRunner, cfg.Calendar, logger)
 	vaccineUC := app.NewVaccineUseCase(vaccineService, petService, txRunner, cfg.Calendar, cfg.Telegram, cfg.Location.String(), logger)
 	treatmentUC := app.NewTreatmentUseCase(treatmentService, doseService, petService, txRunner, cfg.Calendar, cfg.Telegram, cfg.Location.String(), logger)
 	appointmentUC := app.NewAppointmentUseCase(appointmentService, petService, cfg.Calendar, cfg.Telegram, cfg.Location.String(), logger)
 	observationUC := app.NewObservationUseCase(observationService, petService, cfg.Telegram, cfg.Location.String(), logger)
+	supplyUC := app.NewSupplyUseCase(supplyService, petService)
 
 	healthAgg := app.NewHealthAggregator(map[string]app.HealthPinger{
 		"sqlite": database.NewChecker(cfg.DB),
@@ -81,6 +84,7 @@ func New(cfg Config) (*echo.Echo, error) {
 	treatmentHandler := pethttp.NewTreatmentHandler(treatmentUC, cfg.Location)
 	appointmentHandler := pethttp.NewAppointmentHandler(appointmentUC, cfg.Location)
 	observationHandler := pethttp.NewObservationHandler(observationUC, cfg.Location)
+	supplyHandler := pethttp.NewSupplyHandler(supplyUC)
 
 	e := echo.New()
 	e.HideBanner = true
@@ -111,6 +115,7 @@ func New(cfg Config) (*echo.Echo, error) {
 	treatmentHandler.Register(protected)
 	appointmentHandler.Register(protected)
 	observationHandler.Register(protected)
+	supplyHandler.Register(protected)
 
 	return e, nil
 }

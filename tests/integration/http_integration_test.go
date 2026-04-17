@@ -821,6 +821,129 @@ func TestObservationTelegramFailureDoesNotRollback(t *testing.T) {
 	requireEqual(t, "Vomited after breakfast", queryObservation(t, fx.db, observation.ID).Description, "persisted observation description")
 }
 
+func TestSupplyLifecyclePersistsAndComputesReorderDate(t *testing.T) {
+	fx := newFixture(t)
+	pet := fx.createPet(map[string]any{"name": "Luna", "species": "dog"})
+
+	rec := fx.doJSON(http.MethodPost, "/api/v1/pets/"+pet.ID+"/supplies", map[string]any{
+		"name":                  "Royal Canin Medium Adult",
+		"last_purchased_at":     "2026-04-16",
+		"estimated_days_supply": 30,
+		"notes":                 "Comprar no Petlove",
+	}, "bearer")
+	requireStatus(t, rec, http.StatusCreated)
+	var supply supplyResponse
+	decodeJSON(t, rec, &supply)
+	requireNonEmpty(t, supply.ID, "supply id")
+	requireEqual(t, pet.ID, supply.PetID, "supply pet id")
+	requireEqual(t, "Royal Canin Medium Adult", supply.Name, "supply name")
+	requireEqual(t, "2026-04-16", supply.LastPurchasedAt, "supply last purchased")
+	requireEqual(t, 30, supply.EstimatedDaysSupply, "supply estimated days")
+	requireEqual(t, "2026-05-16", supply.NextReorderAt, "supply next reorder")
+	requireEqual(t, "Comprar no Petlove", *supply.Notes, "supply notes")
+	requireNonEmpty(t, supply.CreatedAt, "supply created_at")
+	requireNonEmpty(t, supply.UpdatedAt, "supply updated_at")
+	requireEqual(t, 0, len(fx.calendar.createdEvents), "calendar events after supply create")
+	requireEqual(t, 0, fx.telegram.count(), "telegram messages after supply create")
+
+	row := querySupply(t, fx.db, supply.ID)
+	requireEqual(t, pet.ID, row.PetID, "db supply pet id")
+	requireEqual(t, "Royal Canin Medium Adult", row.Name, "db supply name")
+	requireEqual(t, "2026-04-16", row.LastPurchasedAt, "db supply last purchased")
+	requireEqual(t, 30, row.EstimatedDaysSupply, "db supply estimated days")
+	requireEqual(t, "Comprar no Petlove", row.Notes.String, "db supply notes")
+
+	earlier := fx.createSupply(pet.ID, map[string]any{
+		"name":                  "A Snack",
+		"last_purchased_at":     "2026-04-20",
+		"estimated_days_supply": 10,
+	})
+	sameReorder := fx.createSupply(pet.ID, map[string]any{
+		"name":                  "A Food",
+		"last_purchased_at":     "2026-04-16",
+		"estimated_days_supply": 30,
+	})
+
+	rec = fx.doJSON(http.MethodGet, "/api/v1/pets/"+pet.ID+"/supplies", nil, "bearer")
+	requireStatus(t, rec, http.StatusOK)
+	var listed []supplyResponse
+	decodeJSON(t, rec, &listed)
+	requireEqual(t, 3, len(listed), "listed supply count")
+	requireEqual(t, earlier.ID, listed[0].ID, "first listed supply id")
+	requireEqual(t, sameReorder.ID, listed[1].ID, "second listed supply id")
+	requireEqual(t, supply.ID, listed[2].ID, "third listed supply id")
+
+	rec = fx.doJSON(http.MethodGet, "/api/v1/pets/"+pet.ID+"/supplies/"+supply.ID, nil, "bearer")
+	requireStatus(t, rec, http.StatusOK)
+	var fetched supplyResponse
+	decodeJSON(t, rec, &fetched)
+	requireEqual(t, supply.ID, fetched.ID, "fetched supply id")
+
+	rec = fx.doJSON(http.MethodPatch, "/api/v1/pets/"+pet.ID+"/supplies/"+supply.ID, map[string]any{
+		"last_purchased_at":     "2026-05-16",
+		"estimated_days_supply": 45,
+		"notes":                 "Novo pacote aberto",
+	}, "bearer")
+	requireStatus(t, rec, http.StatusOK)
+	var updated supplyResponse
+	decodeJSON(t, rec, &updated)
+	requireEqual(t, "2026-05-16", updated.LastPurchasedAt, "updated last purchased")
+	requireEqual(t, 45, updated.EstimatedDaysSupply, "updated estimated days")
+	requireEqual(t, "2026-06-30", updated.NextReorderAt, "updated next reorder")
+	requireEqual(t, "Novo pacote aberto", *updated.Notes, "updated notes")
+
+	rec = fx.doJSON(http.MethodDelete, "/api/v1/pets/"+pet.ID+"/supplies/"+supply.ID, nil, "bearer")
+	requireStatus(t, rec, http.StatusNoContent)
+	rec = fx.doJSON(http.MethodGet, "/api/v1/pets/"+pet.ID+"/supplies/"+supply.ID, nil, "bearer")
+	requireStatus(t, rec, http.StatusNotFound)
+}
+
+func TestSupplyAuthValidationAndPetScopedLookup(t *testing.T) {
+	fx := newFixture(t)
+	pet := fx.createPet(map[string]any{"name": "Luna", "species": "dog"})
+	otherPet := fx.createPet(map[string]any{"name": "Nina", "species": "cat"})
+	supply := fx.createSupply(pet.ID, map[string]any{
+		"name":                  "Food",
+		"last_purchased_at":     "2026-04-16",
+		"estimated_days_supply": 30,
+	})
+
+	rec := fx.doJSON(http.MethodGet, "/api/v1/pets/"+pet.ID+"/supplies", nil, "")
+	requireStatus(t, rec, http.StatusUnauthorized)
+
+	rec = fx.doJSON(http.MethodGet, "/api/v1/pets/"+otherPet.ID+"/supplies/"+supply.ID, nil, "bearer")
+	requireStatus(t, rec, http.StatusNotFound)
+
+	rec = fx.doJSON(http.MethodPost, "/api/v1/pets/"+pet.ID+"/supplies", map[string]any{
+		"name":                  "Bad Date",
+		"last_purchased_at":     "2026-04-16T12:00:00",
+		"estimated_days_supply": 30,
+	}, "bearer")
+	requireStatus(t, rec, http.StatusBadRequest)
+
+	rec = fx.doJSON(http.MethodPost, "/api/v1/pets/123e4567-e89b-12d3-a456-426614174999/supplies", map[string]any{
+		"name":                  "Food",
+		"last_purchased_at":     "2026-04-16",
+		"estimated_days_supply": 30,
+	}, "bearer")
+	requireStatus(t, rec, http.StatusNotFound)
+
+	rec = fx.doJSON(http.MethodPost, "/api/v1/pets/"+pet.ID+"/supplies", map[string]any{
+		"name":                  " ",
+		"last_purchased_at":     "2026-04-16",
+		"estimated_days_supply": 30,
+	}, "bearer")
+	requireStatus(t, rec, http.StatusBadRequest)
+
+	rec = fx.doJSON(http.MethodPatch, "/api/v1/pets/"+pet.ID+"/supplies/"+supply.ID, map[string]any{
+		"estimated_days_supply": 0,
+	}, "bearer")
+	requireStatus(t, rec, http.StatusBadRequest)
+
+	rec = fx.doJSON(http.MethodGet, "/api/v1/pets/"+pet.ID+"/supplies/not-a-uuid", nil, "bearer")
+	requireStatus(t, rec, http.StatusBadRequest)
+}
+
 func TestTelegramFailuresDoNotRollbackPetcareState(t *testing.T) {
 	fx := newFixture(t)
 	pet := fx.createPet(map[string]any{"name": "Luna", "species": "dog"})
@@ -892,6 +1015,14 @@ func (fx *fixture) createObservation(petID string, body map[string]any) observat
 	var observation observationResponse
 	decodeJSON(fx.t, rec, &observation)
 	return observation
+}
+
+func (fx *fixture) createSupply(petID string, body map[string]any) supplyResponse {
+	rec := fx.doJSON(http.MethodPost, "/api/v1/pets/"+petID+"/supplies", body, "bearer")
+	requireStatus(fx.t, rec, http.StatusCreated)
+	var supply supplyResponse
+	decodeJSON(fx.t, rec, &supply)
+	return supply
 }
 
 func (fx *fixture) doJSON(method, path string, body any, auth string) *httptest.ResponseRecorder {
@@ -978,6 +1109,18 @@ type observationResponse struct {
 	CreatedAt   string `json:"created_at"`
 }
 
+type supplyResponse struct {
+	ID                  string  `json:"id"`
+	PetID               string  `json:"pet_id"`
+	Name                string  `json:"name"`
+	LastPurchasedAt     string  `json:"last_purchased_at"`
+	EstimatedDaysSupply int     `json:"estimated_days_supply"`
+	NextReorderAt       string  `json:"next_reorder_at"`
+	Notes               *string `json:"notes"`
+	CreatedAt           string  `json:"created_at"`
+	UpdatedAt           string  `json:"updated_at"`
+}
+
 type petRow struct {
 	ID               string
 	Name             string
@@ -1029,6 +1172,17 @@ type observationRow struct {
 	CreatedAt   string
 }
 
+type supplyRow struct {
+	ID                  string
+	PetID               string
+	Name                string
+	LastPurchasedAt     string
+	EstimatedDaysSupply int
+	Notes               sql.NullString
+	CreatedAt           string
+	UpdatedAt           string
+}
+
 func queryPet(t *testing.T, db *sql.DB, id string) petRow {
 	t.Helper()
 	var row petRow
@@ -1077,6 +1231,19 @@ func queryObservation(t *testing.T, db *sql.DB, id string) observationRow {
 	).Scan(&row.ID, &row.PetID, &row.ObservedAt, &row.Description, &row.CreatedAt)
 	if err != nil {
 		t.Fatalf("query observation %q: %v", id, err)
+	}
+	return row
+}
+
+func querySupply(t *testing.T, db *sql.DB, id string) supplyRow {
+	t.Helper()
+	var row supplyRow
+	err := db.QueryRow(`
+		SELECT id, pet_id, name, last_purchased_at, estimated_days_supply, notes, created_at, updated_at
+		FROM supplies WHERE id = ?`, id,
+	).Scan(&row.ID, &row.PetID, &row.Name, &row.LastPurchasedAt, &row.EstimatedDaysSupply, &row.Notes, &row.CreatedAt, &row.UpdatedAt)
+	if err != nil {
+		t.Fatalf("query supply %q: %v", id, err)
 	}
 	return row
 }

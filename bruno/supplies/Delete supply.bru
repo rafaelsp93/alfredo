@@ -1,0 +1,20 @@
+meta {
+  name: Delete supply
+  type: http
+  seq: 5
+}
+
+delete {
+  url: {{baseUrl}}/api/v1/pets/:id/supplies/:sid
+  body: none
+  auth: none
+}
+
+headers {
+  Authorization: Bearer {{apiKey}}
+}
+
+params:path {
+  id: {{petId}}
+  sid: {{supplyId}}
+}
