@@ -102,17 +102,22 @@ func (uc *SummaryUseCase) digestForPet(ctx context.Context, pet domain.Pet, now 
 }
 
 func (uc *SummaryUseCase) vaccinesDueSoon(vaccines []domain.Vaccine, now time.Time) []domain.VaccineSummary {
-	cutoff := now.AddDate(0, 0, VaccineDueSoonDays)
+	today := localDate(now, uc.timezone)
+	cutoff := today.AddDate(0, 0, VaccineDueSoonDays)
 	out := make([]domain.VaccineSummary, 0)
 	for _, vaccine := range vaccines {
-		if vaccine.NextDueAt == nil || vaccine.NextDueAt.After(cutoff) {
+		if vaccine.NextDueAt == nil {
 			continue
 		}
-		daysUntil := daysBetween(now, vaccine.NextDueAt.In(uc.timezone), uc.timezone)
+		dueDate := dateOnlyInLocation(*vaccine.NextDueAt, uc.timezone)
+		if dueDate.After(cutoff) {
+			continue
+		}
+		daysUntil := daysBetween(today, dueDate, uc.timezone)
 		out = append(out, domain.VaccineSummary{
 			Vaccine:      vaccine,
 			DaysUntilDue: daysUntil,
-			Overdue:      vaccine.NextDueAt.Before(now),
+			Overdue:      dueDate.Before(today),
 		})
 	}
 	return out
@@ -176,4 +181,14 @@ func daysBetween(from, to time.Time, loc *time.Location) int {
 	fromDate := time.Date(fy, fm, fd, 0, 0, 0, 0, loc)
 	toDate := time.Date(ty, tm, td, 0, 0, 0, 0, loc)
 	return int(toDate.Sub(fromDate).Hours() / 24)
+}
+
+func localDate(t time.Time, loc *time.Location) time.Time {
+	y, m, d := t.In(loc).Date()
+	return time.Date(y, m, d, 0, 0, 0, 0, loc)
+}
+
+func dateOnlyInLocation(t time.Time, loc *time.Location) time.Time {
+	y, m, d := t.Date()
+	return time.Date(y, m, d, 0, 0, 0, 0, loc)
 }

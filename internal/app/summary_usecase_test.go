@@ -91,6 +91,25 @@ func TestSummaryUseCaseAllPetsWrapsListErrors(t *testing.T) {
 	}
 }
 
+func TestSummaryUseCaseVaccinesDueSoonUsesDateOnlyDueDateInConfiguredTimezone(t *testing.T) {
+	loc, err := time.LoadLocation("America/Sao_Paulo")
+	if err != nil {
+		t.Fatalf("load location: %v", err)
+	}
+	uc := NewSummaryUseCase(nil, nil, nil, nil, nil, nil, loc)
+	now := time.Date(2026, 4, 18, 10, 0, 0, 0, loc)
+	dueTomorrowFromSQLite := time.Date(2026, 4, 19, 0, 0, 0, 0, time.UTC)
+	dueTodayFromSQLite := time.Date(2026, 4, 18, 0, 0, 0, 0, time.UTC)
+
+	summaries := uc.vaccinesDueSoon([]domain.Vaccine{
+		{ID: "due-tomorrow", Name: "V10", NextDueAt: &dueTomorrowFromSQLite},
+		{ID: "due-today", Name: "Raiva", NextDueAt: &dueTodayFromSQLite},
+	}, now)
+
+	assertVaccineSummary(t, summaries, "due-tomorrow", 1, false)
+	assertVaccineSummary(t, summaries, "due-today", 0, false)
+}
+
 type summaryPetService struct {
 	pets []domain.Pet
 	err  error
