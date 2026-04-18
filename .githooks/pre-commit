@@ -1,0 +1,5 @@
+#!/bin/sh
+set -eu
+
+echo "running local guardrails before commit"
+make guardrails-local

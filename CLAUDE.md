@@ -117,6 +117,9 @@ make build          # compile ./alfredo binary
 make run            # build + run server in background (writes alfredo.pid)
 make stop           # kill server using alfredo.pid
 make test           # go test ./internal/...
+make guardrails     # CI-equivalent mandatory quality gate
+make guardrails-local # local gate + tmp/guardrails/report.html
+make install-hooks  # install repo pre-commit hook path
 make tidy           # go mod tidy
 make generate       # mockery
 ```
@@ -130,6 +133,15 @@ make generate       # mockery
 - **Handlers**: tested through use case layer; keep handler tests minimal (just wire-up verification)
 - **Run tests**: `make test` runs all tests in internal/
 
+### Guardrails
+
+`make guardrails` is the CI-equivalent gate and must stay required by GitHub branch protection before merge.
+It runs lint, unit tests, integration tests, `govulncheck`, `gosec`, global unit coverage, and changed-code
+coverage. `make guardrails-local` runs the same gate locally and writes `tmp/guardrails/report.html`.
+
+Run `make install-hooks` once per checkout to route Git hooks to `.githooks/`; the pre-commit hook runs
+`make guardrails-local`. CI remains authoritative because local hooks can be bypassed with `--no-verify`.
+
 ### Production
 
 ```bash
@@ -138,7 +150,7 @@ docker compose -f docker-compose.prod.yml up -d   # uses ghcr.io/rafaelsoares/al
 
 ## Prerequisites
 
-- Go 1.26+
+- Go 1.26.2+
 
 ## Configuration
 
