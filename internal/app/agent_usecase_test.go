@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -9,6 +10,7 @@ import (
 	"go.uber.org/zap"
 
 	agentdomain "github.com/rafaelsoares/alfredo/internal/agent/domain"
+	"github.com/rafaelsoares/alfredo/internal/telegram"
 )
 
 type recordingAgentRouter struct {
@@ -34,7 +36,7 @@ func (r *recordingAgentRouter) Execute(
 
 func TestAgentUseCaseHandleUsesOneShotPrompt(t *testing.T) {
 	router := &recordingAgentRouter{}
-	uc := NewAgentUseCase(router, nil, nil, nil, nil, nil, nil, time.UTC, zap.NewNop())
+	uc := NewAgentUseCase(router, nil, nil, nil, nil, nil, nil, nil, nil, time.UTC, zap.NewNop())
 
 	reply, err := uc.Handle(context.Background(), "Nutella tomou banho quando?")
 	if err != nil {
@@ -60,6 +62,8 @@ func TestAgentUseCaseHandleUsesOneShotPrompt(t *testing.T) {
 		"quando foi a última consulta",
 		"marcar banho e tosa",
 		"type=grooming",
+		"get_pet_summary",
+		"send_telegram",
 	}
 	for _, want := range required {
 		if !strings.Contains(router.systemPrompt, want) {
@@ -98,6 +102,49 @@ func TestBuildAgentToolsAppointmentMetadata(t *testing.T) {
 		if !strings.Contains(strings.ToLower(desc), strings.ToLower(want)) {
 			t.Fatalf("schedule_appointment type description missing %q: %q", want, desc)
 		}
+	}
+}
+
+func TestBuildAgentToolsDailyDigestMetadata(t *testing.T) {
+	tools := buildAgentTools()
+
+	summary := toolByName(t, tools, "get_pet_summary")
+	required, ok := summary.InputSchema["required"].([]string)
+	if !ok {
+		t.Fatalf("get_pet_summary required has unexpected type: %#v", summary.InputSchema["required"])
+	}
+	if len(required) != 0 {
+		t.Fatalf("get_pet_summary should not require input: %#v", summary.InputSchema)
+	}
+	for _, want := range []string{"all-pets", "daily digest", "resumo diário", "supplies needing reorder"} {
+		if !strings.Contains(strings.ToLower(summary.Description), strings.ToLower(want)) {
+			t.Fatalf("get_pet_summary description missing %q: %q", want, summary.Description)
+		}
+	}
+
+	send := toolByName(t, tools, "send_telegram")
+	sendRequired, ok := send.InputSchema["required"].([]string)
+	if !ok || !sameStringSet(sendRequired, []string{"message"}) {
+		t.Fatalf("send_telegram required = %#v", send.InputSchema["required"])
+	}
+}
+
+func TestAgentUseCaseSendTelegramIsBestEffort(t *testing.T) {
+	uc := NewAgentUseCase(nil, nil, nil, nil, nil, nil, nil, nil, failingTelegram{err: errors.New("telegram down")}, time.UTC, zap.NewNop())
+
+	result, err := uc.DispatchToolCall(context.Background(), agentdomain.ToolCall{
+		ID:        "call-1",
+		Name:      "send_telegram",
+		Arguments: map[string]any{"message": "Resumo dos pets"},
+	})
+	if err != nil {
+		t.Fatalf("DispatchToolCall returned error: %v", err)
+	}
+	if result.IsError {
+		t.Fatalf("send_telegram returned error tool result: %#v", result)
+	}
+	if !strings.Contains(result.Content, "Não consegui enviar") {
+		t.Fatalf("send_telegram result content = %q", result.Content)
 	}
 }
 
@@ -159,4 +206,29 @@ func allToolText(tools []agentdomain.Tool) string {
 		b.WriteString("\n")
 	}
 	return b.String()
+}
+
+type failingTelegram struct {
+	err error
+}
+
+func (t failingTelegram) Send(context.Context, telegram.Message) error {
+	return t.err
+}
+
+func sameStringSet(got, want []string) bool {
+	if len(got) != len(want) {
+		return false
+	}
+	seen := make(map[string]int, len(got))
+	for _, value := range got {
+		seen[value]++
+	}
+	for _, value := range want {
+		seen[value]--
+		if seen[value] < 0 {
+			return false
+		}
+	}
+	return true
 }
