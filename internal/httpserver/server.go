@@ -18,6 +18,9 @@ import (
 	agentservice "github.com/rafaelsoares/alfredo/internal/agent/service"
 	"github.com/rafaelsoares/alfredo/internal/app"
 	"github.com/rafaelsoares/alfredo/internal/database"
+	healthhttp "github.com/rafaelsoares/alfredo/internal/health/adapters/primary/http"
+	healthsql "github.com/rafaelsoares/alfredo/internal/health/adapters/secondary/sqlite"
+	healthsvc "github.com/rafaelsoares/alfredo/internal/health/service"
 	pethttp "github.com/rafaelsoares/alfredo/internal/petcare/adapters/primary/http"
 	petmw "github.com/rafaelsoares/alfredo/internal/petcare/adapters/primary/http/middleware"
 	petcaresqlite "github.com/rafaelsoares/alfredo/internal/petcare/adapters/secondary/sqlite"
@@ -69,6 +72,7 @@ func New(cfg Config) (*echo.Echo, error) {
 
 	appointmentRepo := petcaresqlite.NewAppointmentRepository(cfg.DB)
 	supplyRepo := petcaresqlite.NewSupplyRepository(cfg.DB)
+	healthRepo := healthsql.NewProfileRepository(cfg.DB)
 
 	petService := petsvc.NewPetService(petRepo)
 	vaccineService := petsvc.NewVaccineService(vaccineRepo, petRepo)
@@ -77,6 +81,7 @@ func New(cfg Config) (*echo.Echo, error) {
 	appointmentService := petsvc.NewAppointmentService(appointmentRepo)
 	observationService := petsvc.NewObservationService(observationRepo)
 	supplyService := petsvc.NewSupplyService(supplyRepo)
+	healthProfileService := healthsvc.NewProfileService(healthRepo)
 
 	petUC := app.NewPetUseCase(petService, txRunner, cfg.Calendar, logger)
 	vaccineUC := app.NewVaccineUseCase(vaccineService, petService, txRunner, cfg.Calendar, cfg.Telegram, cfg.Location.String(), logger)
@@ -94,6 +99,7 @@ func New(cfg Config) (*echo.Echo, error) {
 	})
 
 	healthHandler := pethttp.NewHealthHTTPHandler(healthAgg)
+	healthProfileHandler := healthhttp.NewProfileHandler(healthProfileService)
 	petHandler := pethttp.NewPetHandler(petUC)
 	summaryHandler := pethttp.NewSummaryHandler(summaryUC, cfg.Location)
 	vaccineHandler := pethttp.NewVaccineHandler(vaccineUC, cfg.Location)
@@ -127,6 +133,7 @@ func New(cfg Config) (*echo.Echo, error) {
 
 	protected := e.Group("/api/v1")
 	protected.Use(petmw.APIKeyAuth(cfg.APIKey))
+	healthProfileHandler.Register(protected)
 	summaryHandler.Register(protected)
 	petHandler.Register(protected)
 	vaccineHandler.Register(protected)

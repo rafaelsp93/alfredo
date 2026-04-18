@@ -51,6 +51,8 @@ Vex also serves as an on-demand advisor. Agents and the user can invoke `/tl` mi
 | Route | Handler |
 |---|---|
 | `GET /api/v1/health` | HealthAggregator (sqlite) |
+| `GET /api/v1/health/profile` | ProfileHandler |
+| `PUT /api/v1/health/profile` | ProfileHandler |
 | `GET /api/v1/pets` | PetHandler |
 | `GET /api/v1/pets/summary` | SummaryHandler |
 | `POST /api/v1/pets` | PetHandler |
@@ -75,18 +77,21 @@ Vex also serves as an on-demand advisor. Agents and the user can invoke `/tl` mi
 
 ## API Collection
 
-The `bruno/` directory at repo root contains a [Bruno](https://www.usebruno.com/) importable collection covering all 21 routes. It is the **source of truth for route documentation** — keep it in sync whenever routes are added or removed.
+The `bruno/` directory at repo root contains a [Bruno](https://www.usebruno.com/) importable collection covering all 29 routes. It is the **source of truth for route documentation** — keep it in sync whenever routes are added or removed.
 
 ```
 bruno/
 ├── bruno.json              — collection metadata
 ├── environments/Local.bru  — baseUrl + sample UUIDs for local dev
 ├── Healthcheck.bru
+├── health/                 — profile requests
 ├── pets/                   — 6 requests (CRUD + summary)
 ├── vaccines/               — 3 requests
 ├── treatments/             — 4 requests (CRUD)
 ├── observations/           — 3 requests (create + read)
-└── supplies/               — 5 requests (CRUD)
+├── appointments/           — 5 requests (CRUD)
+├── supplies/               — 5 requests (CRUD)
+└── agent/                  — Siri command entrypoint
 ```
 
 **Import**: Open Bruno → Import Collection → select `bruno/` folder → set environment to **Local**.
