@@ -1,4 +1,5 @@
-.PHONY: run build test integration-test integration-tests lint tidy generate stop
+.PHONY: run build test integration-test integration-tests lint tidy generate stop \
+        test-coverage vuln-check hooks
 
 BINARY  := ./alfredo
 VERSION := $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
@@ -17,6 +18,14 @@ lint:
 test:
 	go test ./internal/...
 
+test-coverage:
+	go test -coverprofile=coverage.out ./internal/...
+	@echo "Coverage profile written to coverage.out"
+
+vuln-check:
+	@which govulncheck > /dev/null 2>&1 || go install golang.org/x/vuln/cmd/govulncheck@latest
+	govulncheck ./...
+
 integration-test:
 	go test -count=1 ./tests/integration/...
 
@@ -27,3 +36,9 @@ tidy:
 
 generate:
 	go generate ./...
+
+hooks:
+	@echo "Installing git hooks..."
+	cp hooks/pre-commit .git/hooks/pre-commit
+	chmod +x .git/hooks/pre-commit
+	@echo "Done. Pre-commit hook installed."
