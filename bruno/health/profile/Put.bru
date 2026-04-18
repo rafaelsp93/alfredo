@@ -1,0 +1,23 @@
+meta {
+  name: Upsert Health Profile
+  type: http
+  seq: 1
+}
+
+put {
+  url: {{baseUrl}}/api/v1/health/profile
+  body: json
+  auth: none
+}
+
+headers {
+  Authorization: Bearer {{apiKey}}
+}
+
+body:json {
+  {
+    "height_cm": 178,
+    "birth_date": "1993-06-15",
+    "sex": "male"
+  }
+}

@@ -283,6 +283,48 @@ func TestHealthAuthAndInvalidPathValidation(t *testing.T) {
 	requireEqual(t, 0, len(fx.calendar.createdEvents), "calendar event calls for invalid path")
 }
 
+func TestHealthProfileRouteIsProtectedAndPersists(t *testing.T) {
+	fx := newFixture(t)
+
+	rec := fx.doJSON(http.MethodGet, "/api/v1/health/profile", nil, "")
+	requireStatus(t, rec, http.StatusUnauthorized)
+
+	rec = fx.doJSON(http.MethodPut, "/api/v1/health/profile", map[string]any{
+		"height_cm":  178.0,
+		"birth_date": "1993-06-15",
+		"sex":        "male",
+	}, "bearer")
+	requireStatus(t, rec, http.StatusOK)
+	var created struct {
+		ID        int     `json:"id"`
+		HeightCM  float64 `json:"height_cm"`
+		BirthDate string  `json:"birth_date"`
+		Sex       string  `json:"sex"`
+		CreatedAt string  `json:"created_at"`
+		UpdatedAt string  `json:"updated_at"`
+	}
+	decodeJSON(t, rec, &created)
+	requireEqual(t, 1, created.ID, "health profile id")
+	requireEqual(t, 178.0, created.HeightCM, "health profile height")
+	requireEqual(t, "1993-06-15", created.BirthDate, "health profile birth date")
+	requireEqual(t, "male", created.Sex, "health profile sex")
+	requireNonEmpty(t, created.CreatedAt, "health profile created_at")
+	requireNonEmpty(t, created.UpdatedAt, "health profile updated_at")
+
+	rec = fx.doJSON(http.MethodGet, "/api/v1/health/profile", nil, "bearer")
+	requireStatus(t, rec, http.StatusOK)
+	var fetched struct {
+		ID        int     `json:"id"`
+		HeightCM  float64 `json:"height_cm"`
+		BirthDate string  `json:"birth_date"`
+		Sex       string  `json:"sex"`
+	}
+	decodeJSON(t, rec, &fetched)
+	requireEqual(t, 178.0, fetched.HeightCM, "fetched health profile height")
+	requireEqual(t, "1993-06-15", fetched.BirthDate, "fetched health profile birth date")
+	requireEqual(t, "male", fetched.Sex, "fetched health profile sex")
+}
+
 func TestAgentSiriEndpointAuthValidationAndNoop(t *testing.T) {
 	fx := newFixture(t)
 
