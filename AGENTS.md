@@ -54,6 +54,7 @@ Vex also serves as an on-demand advisor. Agents and the user can invoke `/tl` mi
 | `GET /api/v1/health/profile` | ProfileHandler |
 | `PUT /api/v1/health/profile` | ProfileHandler |
 | `GET /api/v1/pets` | PetHandler |
+| `GET /api/v1/pets/summary` | SummaryHandler |
 | `POST /api/v1/pets` | PetHandler |
 | `GET /api/v1/pets/:id` | PetHandler |
 | `PUT /api/v1/pets/:id` | PetHandler |
@@ -83,8 +84,8 @@ bruno/
 ├── bruno.json              — collection metadata
 ├── environments/Local.bru  — baseUrl + sample UUIDs for local dev
 ├── Healthcheck.bru
-├── health/                — profile requests
-├── pets/                   — 5 requests (CRUD)
+├── health/                 — profile requests
+├── pets/                   — 6 requests (CRUD + summary)
 ├── vaccines/               — 3 requests
 ├── treatments/             — 4 requests (CRUD)
 ├── observations/           — 3 requests (create + read)
