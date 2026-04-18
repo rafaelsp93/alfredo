@@ -1,0 +1,30 @@
+coverage:
+  global_min: 70
+  changed_min: 80
+  exclusions:
+    - "cmd/**"
+    - "tools/**"
+    - "**/*_mock.go"
+    - "mocks/**"
+    - "**/mocks/**"
+    - "internal/**/domain/**"
+    - "internal/**/port/**"
+    - "internal/config/**"
+    - "internal/database/**"
+    - "internal/httpserver/**"
+    - "internal/logger/**"
+    - "internal/shared/health/**"
+    - "internal/agent/adapters/**"
+    - "internal/health/adapters/**"
+    - "internal/petcare/adapters/secondary/**"
+    - "internal/petcare/adapters/primary/http/*.go"
+    - "internal/gcalendar/**"
+    - "internal/telegram/**"
+
+security:
+  fail_severities:
+    - HIGH
+    - CRITICAL
+
+diff:
+  base_ref: "origin/main"
