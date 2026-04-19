@@ -34,9 +34,14 @@ func (r *MetricRepository) BulkUpsert(ctx context.Context, metrics []domain.Dail
 		}
 
 		_, err := r.db.ExecContext(ctx, `
-			INSERT OR REPLACE INTO health_daily_metrics
+			INSERT INTO health_daily_metrics
 			(date, metric_type, value, unit, sleep_stages, created_at, updated_at)
 			VALUES (?, ?, ?, ?, ?, ?, ?)
+			ON CONFLICT(date, metric_type) DO UPDATE SET
+				value       = excluded.value,
+				unit        = excluded.unit,
+				sleep_stages = excluded.sleep_stages,
+				updated_at  = excluded.updated_at
 		`,
 			m.Date,
 			m.MetricType,
@@ -99,8 +104,14 @@ func (r *MetricRepository) List(ctx context.Context, metricType string, from, to
 			m.SleepStages = &stages
 		}
 
-		m.CreatedAt, _ = time.Parse(time.RFC3339Nano, createdAt)
-		m.UpdatedAt, _ = time.Parse(time.RFC3339Nano, updatedAt)
+		m.CreatedAt, err = time.Parse(time.RFC3339Nano, createdAt)
+		if err != nil {
+			return nil, fmt.Errorf("parse metric created_at: %w", err)
+		}
+		m.UpdatedAt, err = time.Parse(time.RFC3339Nano, updatedAt)
+		if err != nil {
+			return nil, fmt.Errorf("parse metric updated_at: %w", err)
+		}
 
 		metrics = append(metrics, m)
 	}

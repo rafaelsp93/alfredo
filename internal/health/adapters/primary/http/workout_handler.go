@@ -81,8 +81,14 @@ func (h *WorkoutHandler) ImportWorkouts(c echo.Context) error {
 	importedAt := time.Now().UTC()
 
 	for _, w := range payload.Workouts {
-		startDate, _ := time.Parse(time.RFC3339, w.StartDate)
-		endDate, _ := time.Parse(time.RFC3339, w.EndDate)
+		startDate, err := time.Parse(time.RFC3339, w.StartDate)
+		if err != nil {
+			return c.JSON(http.StatusBadRequest, map[string]string{"error": "workout startDate must be RFC3339 (e.g. 2026-04-18T10:00:00Z)"})
+		}
+		endDate, err := time.Parse(time.RFC3339, w.EndDate)
+		if err != nil {
+			return c.JSON(http.StatusBadRequest, map[string]string{"error": "workout endDate must be RFC3339 (e.g. 2026-04-18T10:30:00Z)"})
+		}
 
 		session := domain.WorkoutSession{
 			ActivityType:    w.ActivityName,
@@ -158,6 +164,7 @@ func (h *WorkoutHandler) ListWorkouts(c echo.Context) error {
 	if err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "to date format must be YYYY-MM-DD"})
 	}
+	to = to.Add(24*time.Hour - time.Nanosecond)
 
 	sessions, err := h.uc.List(c.Request().Context(), from, to)
 	if err != nil {

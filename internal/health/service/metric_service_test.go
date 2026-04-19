@@ -99,25 +99,6 @@ func TestMetricServiceImportWritesToBothRepositories(t *testing.T) {
 	}
 }
 
-func TestMetricServiceImportWrapsRawImportErrors(t *testing.T) {
-	svc := NewMetricService(
-		&metricRepoStub{
-			bulkUpsertFn: func(context.Context, []domain.DailyMetric) (int, error) {
-				return 1, nil
-			},
-		},
-		&rawImportRepoStub{
-			storeFn: func(context.Context, string, string, time.Time) error {
-				return errRawImportFail
-			},
-		},
-	)
-
-	_, err := svc.Import(context.Background(), nil, "", time.Now())
-	if !errors.Is(err, errRawImportFail) {
-		t.Fatalf("Import error = %v, want wrapped raw import error", err)
-	}
-}
 
 func TestMetricServiceListDelegatesAndWrapsErrors(t *testing.T) {
 	svc := NewMetricService(
@@ -132,5 +113,29 @@ func TestMetricServiceListDelegatesAndWrapsErrors(t *testing.T) {
 	_, err := svc.List(context.Background(), "weight", time.Now(), time.Now())
 	if !errors.Is(err, errMetricRepoFail) {
 		t.Fatalf("List error = %v, want wrapped error", err)
+	}
+}
+
+func TestMetricServiceImportSucceedsWhenRawImportFails(t *testing.T) {
+	svc := NewMetricService(
+		&metricRepoStub{
+			bulkUpsertFn: func(_ context.Context, m []domain.DailyMetric) (int, error) {
+				return len(m), nil
+			},
+		},
+		&rawImportRepoStub{
+			storeFn: func(context.Context, string, string, time.Time) error {
+				return errRawImportFail
+			},
+		},
+	)
+
+	metrics := []domain.DailyMetric{{Date: "2026-04-18", MetricType: "weight", Value: 80.5}}
+	count, err := svc.Import(context.Background(), metrics, `{}`, time.Now())
+	if err != nil {
+		t.Fatalf("Import returned error %v; raw import failure must not fail the import", err)
+	}
+	if count != 1 {
+		t.Fatalf("count = %d, want 1", count)
 	}
 }

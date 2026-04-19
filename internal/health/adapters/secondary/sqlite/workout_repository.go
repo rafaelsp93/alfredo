@@ -26,10 +26,22 @@ func (r *WorkoutRepository) BulkUpsert(ctx context.Context, sessions []domain.Wo
 
 	for _, s := range sessions {
 		_, err := r.db.ExecContext(ctx, `
-			INSERT OR REPLACE INTO health_workout_sessions
+			INSERT INTO health_workout_sessions
 			(activity_type, start_date, end_date, duration_seconds, active_calories_kcal, basal_calories_kcal,
 			 hr_avg_bpm, hr_min_bpm, hr_max_bpm, distance_m, source, created_at, updated_at)
 			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			ON CONFLICT(start_date) DO UPDATE SET
+				activity_type        = excluded.activity_type,
+				end_date             = excluded.end_date,
+				duration_seconds     = excluded.duration_seconds,
+				active_calories_kcal = excluded.active_calories_kcal,
+				basal_calories_kcal  = excluded.basal_calories_kcal,
+				hr_avg_bpm           = excluded.hr_avg_bpm,
+				hr_min_bpm           = excluded.hr_min_bpm,
+				hr_max_bpm           = excluded.hr_max_bpm,
+				distance_m           = excluded.distance_m,
+				source               = excluded.source,
+				updated_at           = excluded.updated_at
 		`,
 			s.ActivityType,
 			s.StartDate.Format(time.RFC3339Nano),
@@ -96,10 +108,22 @@ func (r *WorkoutRepository) List(ctx context.Context, from, to time.Time) ([]dom
 			return nil, fmt.Errorf("scan workout: %w", err)
 		}
 
-		s.StartDate, _ = time.Parse(time.RFC3339Nano, startDate)
-		s.EndDate, _ = time.Parse(time.RFC3339Nano, endDate)
-		s.CreatedAt, _ = time.Parse(time.RFC3339Nano, createdAt)
-		s.UpdatedAt, _ = time.Parse(time.RFC3339Nano, updatedAt)
+		s.StartDate, err = time.Parse(time.RFC3339Nano, startDate)
+		if err != nil {
+			return nil, fmt.Errorf("parse workout start_date: %w", err)
+		}
+		s.EndDate, err = time.Parse(time.RFC3339Nano, endDate)
+		if err != nil {
+			return nil, fmt.Errorf("parse workout end_date: %w", err)
+		}
+		s.CreatedAt, err = time.Parse(time.RFC3339Nano, createdAt)
+		if err != nil {
+			return nil, fmt.Errorf("parse workout created_at: %w", err)
+		}
+		s.UpdatedAt, err = time.Parse(time.RFC3339Nano, updatedAt)
+		if err != nil {
+			return nil, fmt.Errorf("parse workout updated_at: %w", err)
+		}
 
 		sessions = append(sessions, s)
 	}

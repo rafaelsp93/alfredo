@@ -91,6 +91,48 @@ func TestWorkoutRepositoryListFiltersAndOrders(t *testing.T) {
 	}
 }
 
+func TestWorkoutRepositoryBulkUpsertPreservesCreatedAt(t *testing.T) {
+	db := openHealthTestDB(t)
+	repo := NewWorkoutRepository(db)
+	ctx := context.Background()
+
+	startDate := time.Date(2026, 4, 18, 10, 0, 0, 0, time.UTC)
+	sessions := []domain.WorkoutSession{
+		{ActivityType: "Running", StartDate: startDate, EndDate: startDate.Add(30 * time.Minute), DurationSeconds: 1800, Source: "Apple Watch"},
+	}
+
+	_, err := repo.BulkUpsert(ctx, sessions)
+	if err != nil {
+		t.Fatalf("first BulkUpsert: %v", err)
+	}
+
+	var originalCreatedAt string
+	if err := db.QueryRow("SELECT created_at FROM health_workout_sessions WHERE activity_type='Running'").Scan(&originalCreatedAt); err != nil {
+		t.Fatalf("read created_at: %v", err)
+	}
+
+	time.Sleep(2 * time.Millisecond)
+
+	// Re-upsert same start_date with different activity type
+	sessions[0].ActivityType = "Trail Running"
+	_, err = repo.BulkUpsert(ctx, sessions)
+	if err != nil {
+		t.Fatalf("second BulkUpsert: %v", err)
+	}
+
+	var newCreatedAt, newUpdatedAt string
+	if err := db.QueryRow("SELECT created_at, updated_at FROM health_workout_sessions").Scan(&newCreatedAt, &newUpdatedAt); err != nil {
+		t.Fatalf("read timestamps after re-upsert: %v", err)
+	}
+
+	if newCreatedAt != originalCreatedAt {
+		t.Fatalf("created_at changed from %q to %q on re-upsert (should be preserved)", originalCreatedAt, newCreatedAt)
+	}
+	if newUpdatedAt <= originalCreatedAt {
+		t.Fatalf("updated_at %q should be after original created_at %q", newUpdatedAt, originalCreatedAt)
+	}
+}
+
 func TestWorkoutRepositoryNullableStatistics(t *testing.T) {
 	db := openHealthTestDB(t)
 	repo := NewWorkoutRepository(db)

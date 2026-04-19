@@ -93,25 +93,6 @@ func TestWorkoutServiceImportWritesToBothRepositories(t *testing.T) {
 	}
 }
 
-func TestWorkoutServiceImportWrapsRawImportErrors(t *testing.T) {
-	svc := NewWorkoutService(
-		&workoutRepoStub{
-			bulkUpsertFn: func(context.Context, []domain.WorkoutSession) (int, error) {
-				return 1, nil
-			},
-		},
-		&rawImportRepoStub{
-			storeFn: func(context.Context, string, string, time.Time) error {
-				return errRawImportFail
-			},
-		},
-	)
-
-	_, err := svc.Import(context.Background(), nil, "", time.Now())
-	if !errors.Is(err, errRawImportFail) {
-		t.Fatalf("Import error = %v, want wrapped raw import error", err)
-	}
-}
 
 func TestWorkoutServiceListDelegatesAndWrapsErrors(t *testing.T) {
 	svc := NewWorkoutService(
@@ -126,5 +107,36 @@ func TestWorkoutServiceListDelegatesAndWrapsErrors(t *testing.T) {
 	_, err := svc.List(context.Background(), time.Now(), time.Now())
 	if !errors.Is(err, errWorkoutRepoFail) {
 		t.Fatalf("List error = %v, want wrapped error", err)
+	}
+}
+
+func TestWorkoutServiceImportSucceedsWhenRawImportFails(t *testing.T) {
+	startDate := time.Date(2026, 4, 18, 10, 0, 0, 0, time.UTC)
+	sessions := []domain.WorkoutSession{{
+		ActivityType:    "Running",
+		StartDate:       startDate,
+		EndDate:         startDate.Add(30 * time.Minute),
+		DurationSeconds: 1800,
+	}}
+
+	svc := NewWorkoutService(
+		&workoutRepoStub{
+			bulkUpsertFn: func(_ context.Context, s []domain.WorkoutSession) (int, error) {
+				return len(s), nil
+			},
+		},
+		&rawImportRepoStub{
+			storeFn: func(context.Context, string, string, time.Time) error {
+				return errRawImportFail
+			},
+		},
+	)
+
+	count, err := svc.Import(context.Background(), sessions, `{}`, time.Now())
+	if err != nil {
+		t.Fatalf("Import returned error %v; raw import failure must not fail the import", err)
+	}
+	if count != 1 {
+		t.Fatalf("count = %d, want 1", count)
 	}
 }

@@ -27,10 +27,8 @@ func (s *MetricService) Import(ctx context.Context, metrics []domain.DailyMetric
 		return 0, fmt.Errorf("import metrics: %w", err)
 	}
 
-	// Store raw payload for audit trail
-	if err := s.rawImportRepo.Store(ctx, "metrics", payload, importedAt); err != nil {
-		return 0, fmt.Errorf("store raw metrics import: %w", err)
-	}
+	// Store raw payload for audit trail — best-effort, does not fail the import
+	_ = s.rawImportRepo.Store(ctx, "metrics", payload, importedAt)
 
 	return count, nil
 }

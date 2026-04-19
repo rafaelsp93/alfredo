@@ -142,6 +142,47 @@ func TestMetricRepositorySleepStagesRoundTrip(t *testing.T) {
 	}
 }
 
+func TestMetricRepositoryBulkUpsertPreservesCreatedAt(t *testing.T) {
+	db := openHealthTestDB(t)
+	repo := NewMetricRepository(db)
+	ctx := context.Background()
+
+	metrics := []domain.DailyMetric{
+		{Date: "2026-04-18", MetricType: "weight", Value: 80.5, Unit: "kg"},
+	}
+
+	_, err := repo.BulkUpsert(ctx, metrics)
+	if err != nil {
+		t.Fatalf("first BulkUpsert: %v", err)
+	}
+
+	var originalCreatedAt string
+	if err := db.QueryRow("SELECT created_at FROM health_daily_metrics WHERE date='2026-04-18' AND metric_type='weight'").Scan(&originalCreatedAt); err != nil {
+		t.Fatalf("read created_at: %v", err)
+	}
+
+	time.Sleep(2 * time.Millisecond)
+
+	// Re-upsert with updated value
+	metrics[0].Value = 81.0
+	_, err = repo.BulkUpsert(ctx, metrics)
+	if err != nil {
+		t.Fatalf("second BulkUpsert: %v", err)
+	}
+
+	var newCreatedAt, newUpdatedAt string
+	if err := db.QueryRow("SELECT created_at, updated_at FROM health_daily_metrics WHERE date='2026-04-18' AND metric_type='weight'").Scan(&newCreatedAt, &newUpdatedAt); err != nil {
+		t.Fatalf("read timestamps after re-upsert: %v", err)
+	}
+
+	if newCreatedAt != originalCreatedAt {
+		t.Fatalf("created_at changed from %q to %q on re-upsert (should be preserved)", originalCreatedAt, newCreatedAt)
+	}
+	if newUpdatedAt <= originalCreatedAt {
+		t.Fatalf("updated_at %q should be after original created_at %q", newUpdatedAt, originalCreatedAt)
+	}
+}
+
 func TestMetricRepositoryNullSleepStagesForOtherMetrics(t *testing.T) {
 	db := openHealthTestDB(t)
 	repo := NewMetricRepository(db)

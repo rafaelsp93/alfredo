@@ -27,10 +27,8 @@ func (s *WorkoutService) Import(ctx context.Context, sessions []domain.WorkoutSe
 		return 0, fmt.Errorf("import workouts: %w", err)
 	}
 
-	// Store raw payload for audit trail
-	if err := s.rawImportRepo.Store(ctx, "workouts", payload, importedAt); err != nil {
-		return 0, fmt.Errorf("store raw workouts import: %w", err)
-	}
+	// Store raw payload for audit trail — best-effort, does not fail the import
+	_ = s.rawImportRepo.Store(ctx, "workouts", payload, importedAt)
 
 	return count, nil
 }
