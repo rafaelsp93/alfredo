@@ -1,0 +1,16 @@
+profile: coverage.unit.out
+
+threshold:
+  file: 80
+  total: 70
+
+exclude:
+  paths:
+    - internal/.*/domain/.*
+    - internal/.*/port/.*
+    - internal/config
+    - internal/logger
+    - internal/httpserver
+    - internal/shared/health
+    - internal/database
+    - internal/gcalendar
