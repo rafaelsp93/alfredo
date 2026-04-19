@@ -11,6 +11,7 @@ import (
 	"go.uber.org/zap"
 
 	agentdomain "github.com/rafaelsoares/alfredo/internal/agent/domain"
+	healthdomain "github.com/rafaelsoares/alfredo/internal/health/domain"
 	"github.com/rafaelsoares/alfredo/internal/petcare/domain"
 	"github.com/rafaelsoares/alfredo/internal/petcare/service"
 	"github.com/rafaelsoares/alfredo/internal/telegram"
@@ -54,7 +55,7 @@ func (r *failingAgentRouter) Execute(
 
 func TestAgentUseCaseHandleUsesOneShotPrompt(t *testing.T) {
 	router := &recordingAgentRouter{}
-	uc := NewAgentUseCase(router, nil, nil, nil, nil, nil, nil, nil, nil, time.UTC, zap.NewNop())
+	uc := NewAgentUseCase(router, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, time.UTC, zap.NewNop())
 
 	reply, err := uc.Handle(context.Background(), "Nutella tomou banho quando?")
 	if err != nil {
@@ -95,7 +96,7 @@ func TestAgentUseCaseHandleUsesOneShotPrompt(t *testing.T) {
 
 func TestAgentUseCaseHandleReturnsRouterFallbackReply(t *testing.T) {
 	router := &failingAgentRouter{reply: "Não consegui concluir.", err: errors.New("router down")}
-	uc := NewAgentUseCase(router, nil, nil, nil, nil, nil, nil, nil, nil, time.UTC, zap.NewNop())
+	uc := NewAgentUseCase(router, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, time.UTC, zap.NewNop())
 
 	reply, err := uc.Handle(context.Background(), "resumo dos pets")
 	if err != nil {
@@ -103,6 +104,47 @@ func TestAgentUseCaseHandleReturnsRouterFallbackReply(t *testing.T) {
 	}
 	if reply != "Não consegui concluir." {
 		t.Fatalf("reply = %q, want fallback reply", reply)
+	}
+}
+
+func TestAgentSystemPromptHealthDisambiguation(t *testing.T) {
+	required := []string{
+		"SAÚDE PESSOAL",
+		"PETS:",
+		"get_health_profile",
+		"get_health_metrics",
+		"list_workouts",
+		"Nunca use ferramentas de saúde para pets",
+	}
+	for _, want := range required {
+		if !strings.Contains(agentSystemPrompt, want) {
+			t.Fatalf("system prompt missing %q", want)
+		}
+	}
+}
+
+func TestBuildAgentToolsHealthMetadata(t *testing.T) {
+	tools := buildAgentTools()
+
+	for _, name := range []string{"get_health_profile", "get_health_metrics", "list_workouts"} {
+		tool := toolByName(t, tools, name)
+		if !strings.Contains(tool.Description, "Rafael himself") && !strings.Contains(tool.Description, "Rafael's own") {
+			t.Fatalf("%s description missing disambiguation anchor: %q", name, tool.Description)
+		}
+	}
+
+	metrics := toolByName(t, tools, "get_health_metrics")
+	required, ok := metrics.InputSchema["required"].([]string)
+	if !ok || !sameStringSet(required, []string{"metric_type"}) {
+		t.Fatalf("get_health_metrics required = %#v, want [metric_type]", metrics.InputSchema["required"])
+	}
+
+	workouts := toolByName(t, tools, "list_workouts")
+	workoutsRequired := workouts.InputSchema["required"]
+	if workoutsRequired != nil {
+		if req, ok := workoutsRequired.([]string); ok && len(req) > 0 {
+			t.Fatalf("list_workouts should have no required params, got %v", req)
+		}
 	}
 }
 
@@ -161,7 +203,7 @@ func TestBuildAgentToolsDailyDigestMetadata(t *testing.T) {
 }
 
 func TestAgentUseCaseSendTelegramIsBestEffort(t *testing.T) {
-	uc := NewAgentUseCase(nil, nil, nil, nil, nil, nil, nil, nil, failingTelegram{err: errors.New("telegram down")}, time.UTC, zap.NewNop())
+	uc := NewAgentUseCase(nil, nil, nil, nil, nil, nil, nil, nil, failingTelegram{err: errors.New("telegram down")}, nil, nil, nil, time.UTC, zap.NewNop())
 
 	result, err := uc.DispatchToolCall(context.Background(), agentdomain.ToolCall{
 		ID:        "call-1",
@@ -181,7 +223,7 @@ func TestAgentUseCaseSendTelegramIsBestEffort(t *testing.T) {
 
 func TestAgentUseCaseSendTelegramReportsSuccessAndMissingAdapter(t *testing.T) {
 	success := &recordingTelegram{}
-	uc := NewAgentUseCase(nil, nil, nil, nil, nil, nil, nil, nil, success, time.UTC, nil)
+	uc := NewAgentUseCase(nil, nil, nil, nil, nil, nil, nil, nil, success, nil, nil, nil, time.UTC, zap.NewNop())
 
 	result, err := uc.DispatchToolCall(context.Background(), agentdomain.ToolCall{
 		ID:        "call-1",
@@ -199,7 +241,7 @@ func TestAgentUseCaseSendTelegramReportsSuccessAndMissingAdapter(t *testing.T) {
 		t.Fatalf("telegram messages = %#v, want one sent message", success.messages)
 	}
 
-	withoutTelegram := NewAgentUseCase(nil, nil, nil, nil, nil, nil, nil, nil, nil, time.UTC, zap.NewNop())
+	withoutTelegram := NewAgentUseCase(nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, time.UTC, zap.NewNop())
 	result, err = withoutTelegram.DispatchToolCall(context.Background(), agentdomain.ToolCall{
 		ID:        "call-2",
 		Name:      "send_telegram",
@@ -388,6 +430,56 @@ func TestAgentUseCaseDispatchReadTools(t *testing.T) {
 					t.Fatalf("summary calls = %d, want 1", d.summary.calls)
 				}
 				assertJSONContains(t, result.Content, "Nutella")
+			},
+		},
+		{
+			name: "get_health_profile",
+			call: toolCall("get_health_profile", nil),
+			config: func(d *agentTestDeps) {
+				d.healthProfile.profile = healthdomain.HealthProfile{ID: 1, HeightCM: 178.0, BirthDate: "1993-06-15", Sex: "male"}
+			},
+			assert: func(t *testing.T, d *agentTestDeps, result agentdomain.ToolResult) {
+				t.Helper()
+				if d.healthProfile.calls != 1 {
+					t.Fatalf("health profile calls = %d, want 1", d.healthProfile.calls)
+				}
+				assertJSONContains(t, result.Content, "1993-06-15")
+			},
+		},
+		{
+			name: "get_health_metrics metric_type only",
+			call: toolCall("get_health_metrics", map[string]any{"metric_type": "weight"}),
+			config: func(d *agentTestDeps) {
+				d.healthMetrics.metrics = []healthdomain.DailyMetric{{ID: 1, Date: "2026-04-17", MetricType: "weight", Value: 80.5, Unit: "kg"}}
+			},
+			assert: func(t *testing.T, d *agentTestDeps, result agentdomain.ToolResult) {
+				t.Helper()
+				if d.healthMetrics.metricType != "weight" {
+					t.Fatalf("metric type = %q, want weight", d.healthMetrics.metricType)
+				}
+				if !d.healthMetrics.from.IsZero() || !d.healthMetrics.to.IsZero() {
+					t.Fatalf("from/to should be zero when absent: from=%v to=%v", d.healthMetrics.from, d.healthMetrics.to)
+				}
+				assertJSONContains(t, result.Content, "weight")
+			},
+		},
+		{
+			name: "list_workouts with from and to",
+			call: toolCall("list_workouts", map[string]any{"from": "2026-04-10", "to": "2026-04-17"}),
+			config: func(d *agentTestDeps) {
+				d.healthWorkouts.sessions = []healthdomain.WorkoutSession{{ID: 1, ActivityType: "Running"}}
+			},
+			assert: func(t *testing.T, d *agentTestDeps, result agentdomain.ToolResult) {
+				t.Helper()
+				wantFrom := time.Date(2026, 4, 10, 0, 0, 0, 0, time.UTC)
+				wantTo := time.Date(2026, 4, 17, 0, 0, 0, 0, time.UTC)
+				if !d.healthWorkouts.from.Equal(wantFrom) {
+					t.Fatalf("workouts from = %v, want %v", d.healthWorkouts.from, wantFrom)
+				}
+				if !d.healthWorkouts.to.Equal(wantTo) {
+					t.Fatalf("workouts to = %v, want %v", d.healthWorkouts.to, wantTo)
+				}
+				assertJSONContains(t, result.Content, "Running")
 			},
 		},
 	}
@@ -645,7 +737,7 @@ func TestAgentUseCaseDispatchToolErrors(t *testing.T) {
 			name: "summary not configured",
 			call: toolCall("get_pet_summary", nil),
 			useCase: func(d *agentTestDeps) *AgentUseCase {
-				return NewAgentUseCase(nil, d.pets, d.vaccines, d.treatments, d.observations, d.appointments, d.supplies, nil, nil, loc, zap.NewNop())
+				return NewAgentUseCase(nil, d.pets, d.vaccines, d.treatments, d.observations, d.appointments, d.supplies, nil, nil, nil, nil, nil, loc, zap.NewNop())
 			},
 			wantMessage: "summary use case is not configured",
 		},
@@ -656,6 +748,24 @@ func TestAgentUseCaseDispatchToolErrors(t *testing.T) {
 				d.pets.listErr = downstreamErr
 			},
 			wantMessage: downstreamErr.Error(),
+		},
+		{
+			name: "get_health_profile not found",
+			call: toolCall("get_health_profile", nil),
+			config: func(d *agentTestDeps) {
+				d.healthProfile.err = healthdomain.ErrNotFound
+			},
+			wantMessage: "nenhum perfil de saúde cadastrado",
+		},
+		{
+			name:        "get_health_metrics missing metric_type",
+			call:        toolCall("get_health_metrics", map[string]any{}),
+			wantMessage: "metric_type is required",
+		},
+		{
+			name:        "get_health_metrics invalid from date",
+			call:        toolCall("get_health_metrics", map[string]any{"metric_type": "weight", "from": "not-a-date"}),
+			wantMessage: "from must be a date",
 		},
 	}
 
@@ -835,29 +945,35 @@ func mustLocation(t *testing.T, name string) *time.Location {
 }
 
 type agentTestDeps struct {
-	pets         *agentPetFake
-	vaccines     *agentVaccineFake
-	treatments   *agentTreatmentFake
-	observations *agentObservationFake
-	appointments *agentAppointmentFake
-	supplies     *agentSupplyFake
-	summary      *agentSummaryFake
+	pets           *agentPetFake
+	vaccines       *agentVaccineFake
+	treatments     *agentTreatmentFake
+	observations   *agentObservationFake
+	appointments   *agentAppointmentFake
+	supplies       *agentSupplyFake
+	summary        *agentSummaryFake
+	healthProfile  *agentHealthProfileFake
+	healthMetrics  *agentHealthMetricsFake
+	healthWorkouts *agentHealthWorkoutsFake
 }
 
 func newAgentTestDeps() *agentTestDeps {
 	return &agentTestDeps{
-		pets:         &agentPetFake{},
-		vaccines:     &agentVaccineFake{},
-		treatments:   &agentTreatmentFake{},
-		observations: &agentObservationFake{},
-		appointments: &agentAppointmentFake{},
-		supplies:     &agentSupplyFake{},
-		summary:      &agentSummaryFake{},
+		pets:           &agentPetFake{},
+		vaccines:       &agentVaccineFake{},
+		treatments:     &agentTreatmentFake{},
+		observations:   &agentObservationFake{},
+		appointments:   &agentAppointmentFake{},
+		supplies:       &agentSupplyFake{},
+		summary:        &agentSummaryFake{},
+		healthProfile:  &agentHealthProfileFake{},
+		healthMetrics:  &agentHealthMetricsFake{},
+		healthWorkouts: &agentHealthWorkoutsFake{},
 	}
 }
 
 func (d *agentTestDeps) useCase(loc *time.Location) *AgentUseCase {
-	return NewAgentUseCase(nil, d.pets, d.vaccines, d.treatments, d.observations, d.appointments, d.supplies, d.summary, nil, loc, zap.NewNop())
+	return NewAgentUseCase(nil, d.pets, d.vaccines, d.treatments, d.observations, d.appointments, d.supplies, d.summary, nil, d.healthProfile, d.healthMetrics, d.healthWorkouts, loc, zap.NewNop())
 }
 
 type failingTelegram struct {
@@ -1085,6 +1201,45 @@ type agentSummaryFake struct {
 func (f *agentSummaryFake) AllPets(context.Context) (domain.AllPetsSummary, error) {
 	f.calls++
 	return f.summary, f.err
+}
+
+type agentHealthProfileFake struct {
+	profile healthdomain.HealthProfile
+	err     error
+	calls   int
+}
+
+func (f *agentHealthProfileFake) Get(_ context.Context) (healthdomain.HealthProfile, error) {
+	f.calls++
+	return f.profile, f.err
+}
+
+type agentHealthMetricsFake struct {
+	metrics    []healthdomain.DailyMetric
+	err        error
+	metricType string
+	from       time.Time
+	to         time.Time
+}
+
+func (f *agentHealthMetricsFake) List(_ context.Context, metricType string, from, to time.Time) ([]healthdomain.DailyMetric, error) {
+	f.metricType = metricType
+	f.from = from
+	f.to = to
+	return f.metrics, f.err
+}
+
+type agentHealthWorkoutsFake struct {
+	sessions []healthdomain.WorkoutSession
+	err      error
+	from     time.Time
+	to       time.Time
+}
+
+func (f *agentHealthWorkoutsFake) List(_ context.Context, from, to time.Time) ([]healthdomain.WorkoutSession, error) {
+	f.from = from
+	f.to = to
+	return f.sessions, f.err
 }
 
 func sameStringSet(got, want []string) bool {
