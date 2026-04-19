@@ -81,7 +81,7 @@ func (r *WorkoutRepository) List(ctx context.Context, from, to time.Time) ([]dom
 	if err != nil {
 		return nil, fmt.Errorf("query workouts: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var sessions []domain.WorkoutSession
 	for rows.Next() {

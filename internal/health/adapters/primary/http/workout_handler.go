@@ -50,7 +50,7 @@ type workoutSessionResponse struct {
 	UpdatedAt          string  `json:"updated_at"`
 }
 
-// Apple Health Exporter workouts format
+// Apple Health Exporter workouts format.
 type healthExporterWorkout struct {
 	ActivityName string                 `json:"activityName"`
 	StartDate    string                 `json:"startDate"`
@@ -59,9 +59,6 @@ type healthExporterWorkout struct {
 	Statistics   map[string]interface{} `json:"statistics"`
 }
 
-type workoutStatistic struct {
-	Value float64 `json:"value"`
-}
 
 func (h *WorkoutHandler) ImportWorkouts(c echo.Context) error {
 	body, err := io.ReadAll(c.Request().Body)

@@ -44,7 +44,7 @@ type dailyMetricResponse struct {
 	UpdatedAt   string           `json:"updated_at"`
 }
 
-// Health Exporter format: {metricType: [{date, value, unit, stages}, ...], ...}
+// Health Exporter format: {metricType: [{date, value, unit, stages}, ...], ...}.
 type healthExporterMetric struct {
 	Date   string      `json:"date"`
 	Value  float64     `json:"value"`

@@ -74,7 +74,7 @@ func (r *MetricRepository) List(ctx context.Context, metricType string, from, to
 	if err != nil {
 		return nil, fmt.Errorf("query metrics: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var metrics []domain.DailyMetric
 	for rows.Next() {
