@@ -384,18 +384,6 @@ func (f *fakePetGetterWithCalendar) GetByID(context.Context, string) (*domain.Pe
 	return f.pet, nil
 }
 
-type stubPetService struct{}
-
-func (s *stubPetService) List(context.Context) ([]domain.Pet, error) { return nil, nil }
-func (s *stubPetService) Create(context.Context, service.CreatePetInput) (*domain.Pet, error) {
-	return nil, nil
-}
-func (s *stubPetService) GetByID(context.Context, string) (*domain.Pet, error) { return nil, nil }
-func (s *stubPetService) Update(context.Context, string, service.UpdatePetInput) (*domain.Pet, error) {
-	return nil, nil
-}
-func (s *stubPetService) Delete(context.Context, string) error { return nil }
-
 type stubVaccineService struct{}
 
 func (s *stubVaccineService) ListVaccines(context.Context, string) ([]domain.Vaccine, error) {
