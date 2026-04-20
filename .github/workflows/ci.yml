@@ -99,10 +99,10 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build Docker image
-        run: docker build -t ghcr.io/${{ github.repository }}:latest .
+        run: docker build -t ghcr.io/rsk-apps/alfredo:latest .
 
       - name: Push to GHCR
-        run: docker push ghcr.io/${{ github.repository }}:latest
+        run: docker push ghcr.io/rsk-apps/alfredo:latest
 
   deploy:
     needs: build
