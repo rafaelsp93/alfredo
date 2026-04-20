@@ -2,15 +2,21 @@ package http
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"math"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/labstack/echo/v4"
+	"github.com/rafaelsoares/alfredo/internal/database"
+	healthsqlite "github.com/rafaelsoares/alfredo/internal/health/adapters/secondary/sqlite"
 	"github.com/rafaelsoares/alfredo/internal/health/domain"
+	healthservice "github.com/rafaelsoares/alfredo/internal/health/service"
 )
 
 type workoutUseCaseStub struct {
@@ -195,6 +201,110 @@ func TestWorkoutHandlerImportHappyPathWithStatistics(t *testing.T) {
 	}
 }
 
+func TestWorkoutHandlerImportRealExporterShapeRoundTrip(t *testing.T) {
+	db, err := database.Open(filepath.Join(t.TempDir(), "alfredo.db"))
+	if err != nil {
+		t.Fatalf("open test db: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := db.Close(); err != nil {
+			t.Fatalf("close test db: %v", err)
+		}
+	})
+
+	workoutRepo := healthsqlite.NewWorkoutRepository(db)
+	rawImportRepo := healthsqlite.NewRawImportRepository(db)
+	svc := healthservice.NewWorkoutService(workoutRepo, rawImportRepo)
+	h := NewWorkoutHandler(svc)
+	e := echo.New()
+
+	importBody := `{
+		"exportInfo": {
+			"appVersion": "1.3.0",
+			"workoutCount": 1
+		},
+		"workouts": [{
+			"activityType": "walking",
+			"duration": 3002.5912960767746,
+			"endDate": "2026-04-09T16:05:46Z",
+			"source": "Apple Watch de Rafael",
+			"startDate": "2026-04-09T15:15:43Z",
+			"statistics": {
+				"HKQuantityTypeIdentifierActiveEnergyBurned": {
+					"sum": 486.52386775509677,
+					"unit": "kcal"
+				},
+				"HKQuantityTypeIdentifierBasalEnergyBurned": {
+					"sum": 121.88616010203145,
+					"unit": "kcal"
+				},
+				"HKQuantityTypeIdentifierDistanceWalkingRunning": {
+					"sum": 4599.8741802047589,
+					"unit": "m"
+				},
+				"HKQuantityTypeIdentifierHeartRate": {
+					"average": 140.91387412587412,
+					"max": 164,
+					"min": 102,
+					"unit": "count/min"
+				}
+			}
+		}]
+	}`
+
+	importReq := httptest.NewRequest(http.MethodPost, "/api/v1/health/workouts/import", strings.NewReader(importBody))
+	importReq.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+	importRec := httptest.NewRecorder()
+	if err := h.ImportWorkouts(e.NewContext(importReq, importRec)); err != nil {
+		t.Fatalf("import workouts: %v", err)
+	}
+	if importRec.Code != http.StatusOK {
+		t.Fatalf("import status = %d, body = %s, want 200", importRec.Code, importRec.Body.String())
+	}
+
+	listReq := httptest.NewRequest(http.MethodGet, "/api/v1/health/workouts?from=2026-04-09&to=2026-04-09", nil)
+	listRec := httptest.NewRecorder()
+	if err := h.ListWorkouts(e.NewContext(listReq, listRec)); err != nil {
+		t.Fatalf("list workouts: %v", err)
+	}
+	if listRec.Code != http.StatusOK {
+		t.Fatalf("list status = %d, body = %s, want 200", listRec.Code, listRec.Body.String())
+	}
+
+	var got []workoutSessionResponse
+	if err := json.Unmarshal(listRec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode list response: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("listed workouts = %d, want 1; body = %s", len(got), listRec.Body.String())
+	}
+
+	session := got[0]
+	if session.ActivityType != "walking" {
+		t.Fatalf("ActivityType = %q, want walking", session.ActivityType)
+	}
+	if session.Source != "Apple Watch de Rafael" {
+		t.Fatalf("Source = %q, want Apple Watch de Rafael", session.Source)
+	}
+	if session.DurationSeconds != 3002.5912960767746 {
+		t.Fatalf("DurationSeconds = %v, want 3002.5912960767746", session.DurationSeconds)
+	}
+	assertFloatPtr(t, "ActiveCaloriesKcal", session.ActiveCaloriesKcal, 486.52386775509677)
+	assertFloatPtr(t, "BasalCaloriesKcal", session.BasalCaloriesKcal, 121.88616010203145)
+	assertFloatPtr(t, "DistanceM", session.DistanceM, 4599.8741802047589)
+	assertFloatPtr(t, "HRAvgBPM", session.HRAvgBPM, 140.91387412587412)
+	assertFloatPtr(t, "HRMinBPM", session.HRMinBPM, 102)
+	assertFloatPtr(t, "HRMaxBPM", session.HRMaxBPM, 164)
+
+	var rawImportCount int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM health_raw_imports WHERE import_type = 'workouts'`).Scan(&rawImportCount); err != nil {
+		t.Fatalf("count raw imports: %v", err)
+	}
+	if rawImportCount != 1 {
+		t.Fatalf("raw workout imports = %d, want 1", rawImportCount)
+	}
+}
+
 func TestWorkoutHandlerImportRejectsInvalidJSON(t *testing.T) {
 	rec := doWorkoutRequest(t, http.MethodPost, "/api/v1/health/workouts/import", "not-json", &workoutUseCaseStub{})
 	if rec.Code != http.StatusBadRequest {
@@ -318,5 +428,15 @@ func TestWorkoutHandlerListReturnsSessionsResponse(t *testing.T) {
 	body := rec.Body.String()
 	if !strings.Contains(body, `"Running"`) || !strings.Contains(body, `"Apple Watch"`) {
 		t.Fatalf("body = %s, want session data", body)
+	}
+}
+
+func assertFloatPtr(t *testing.T, name string, got *float64, want float64) {
+	t.Helper()
+	if got == nil {
+		t.Fatalf("%s = nil, want %v", name, want)
+	}
+	if math.Abs(*got-want) > 0.000001 {
+		t.Fatalf("%s = %v, want %v", name, *got, want)
 	}
 }
