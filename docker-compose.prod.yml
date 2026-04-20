@@ -1,6 +1,6 @@
 services:
   alfredo:
-    image: ghcr.io/rsk-apps/alfredo:${IMAGE_TAG:-latest}
+    image: ghcr.io/rafaelsp93/alfredo:${IMAGE_TAG:-latest}
     pull_policy: always
     container_name: alfredo
     restart: unless-stopped

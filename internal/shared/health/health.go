@@ -9,5 +9,6 @@ type DependencyStatus struct {
 // HealthResult is the aggregated health status of the system.
 type HealthResult struct {
 	Status       string                      `json:"status"`
+	Version      string                      `json:"version,omitempty"`
 	Dependencies map[string]DependencyStatus `json:"dependencies"`
 }

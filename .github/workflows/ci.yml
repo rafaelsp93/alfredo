@@ -6,6 +6,9 @@ on:
   pull_request:
     branches: [main]
 
+env:
+  IMAGE_NAME: ghcr.io/rafaelsp93/alfredo
+
 jobs:
   lint:
     runs-on: ubuntu-latest
@@ -99,15 +102,25 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build Docker image
-        run: docker build -t ghcr.io/rsk-apps/alfredo:latest .
+        run: |
+          docker build \
+            --build-arg "VERSION=${GITHUB_SHA}" \
+            -t "${IMAGE_NAME}:latest" \
+            -t "${IMAGE_NAME}:${GITHUB_SHA}" \
+            .
 
       - name: Push to GHCR
-        run: docker push ghcr.io/rsk-apps/alfredo:latest
+        run: |
+          docker push "${IMAGE_NAME}:${GITHUB_SHA}"
+          docker push "${IMAGE_NAME}:latest"
 
   deploy:
     needs: build
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/main'
+    concurrency:
+      group: production-deploy
+      cancel-in-progress: false
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -119,7 +132,7 @@ jobs:
           virtual-machine: ${{ vars.HOSTINGER_VM_ID }}
           docker-compose-path: docker-compose.prod.yml
           environment-variables: |
-            IMAGE_TAG=latest
+            IMAGE_TAG=${{ github.sha }}
             APP_GCALENDAR_CLIENT_ID=${{ secrets.APP_GCALENDAR_CLIENT_ID }}
             APP_GCALENDAR_CLIENT_SECRET=${{ secrets.APP_GCALENDAR_CLIENT_SECRET }}
             APP_GCALENDAR_REFRESH_TOKEN=${{ secrets.APP_GCALENDAR_REFRESH_TOKEN }}
@@ -132,3 +145,30 @@ jobs:
             APP_AGENT_TOTAL_TIMEOUT_SECONDS=20
             APP_AGENT_CALL_TIMEOUT_SECONDS=8
             APP_AUTH_API_KEY=${{ secrets.APP_AUTH_API_KEY }}
+
+      - name: Verify production deployment
+        env:
+          EXPECTED_STATUS: "200"
+          EXPECTED_VERSION: ${{ github.sha }}
+          HEALTH_URL: https://rsk-apps.cloud/api/v1/health
+        run: |
+          set -euo pipefail
+
+          for attempt in $(seq 1 30); do
+            health_status="$(curl -fsS -o /tmp/alfredo-health.json -w '%{http_code}' "$HEALTH_URL" || true)"
+            deployed_version="$(jq -r '.version // ""' /tmp/alfredo-health.json 2>/dev/null || true)"
+
+            if [ "$health_status" = "$EXPECTED_STATUS" ] && [ "$deployed_version" = "$EXPECTED_VERSION" ]; then
+              echo "Production deployment verified at ${deployed_version}."
+              exit 0
+            fi
+
+            echo "Waiting for production deployment: attempt ${attempt}/30, health=${health_status:-none}, version=${deployed_version:-none}"
+            sleep 10
+          done
+
+          echo "Production deployment verification failed."
+          echo "Expected version: ${EXPECTED_VERSION}"
+          echo "Health response:"
+          cat /tmp/alfredo-health.json 2>/dev/null || true
+          exit 1

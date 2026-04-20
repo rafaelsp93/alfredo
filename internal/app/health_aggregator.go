@@ -11,10 +11,15 @@ import (
 // into a single /api/v1/health response.
 type HealthAggregator struct {
 	checkers map[string]HealthPinger
+	version  string
 }
 
 func NewHealthAggregator(checkers map[string]HealthPinger) *HealthAggregator {
 	return &HealthAggregator{checkers: checkers}
+}
+
+func NewHealthAggregatorWithVersion(checkers map[string]HealthPinger, version string) *HealthAggregator {
+	return &HealthAggregator{checkers: checkers, version: version}
 }
 
 func (h *HealthAggregator) Check(ctx context.Context) health.HealthResult {
@@ -39,5 +44,5 @@ func (h *HealthAggregator) Check(ctx context.Context) health.HealthResult {
 	if !allHealthy {
 		status = "degraded"
 	}
-	return health.HealthResult{Status: status, Dependencies: deps}
+	return health.HealthResult{Status: status, Version: h.version, Dependencies: deps}
 }

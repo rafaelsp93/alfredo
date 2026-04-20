@@ -36,6 +36,7 @@ type Config struct {
 	APIKey            string
 	Location          *time.Location
 	Logger            *zap.Logger
+	Version           string
 }
 
 func New(cfg Config) (*echo.Echo, error) {
@@ -99,9 +100,9 @@ func New(cfg Config) (*echo.Echo, error) {
 	agentRouter := agentservice.NewRouter(agentLLM, agentInvocationRepo, cfg.AgentRouterConfig, logger)
 	agentUC := app.NewAgentUseCase(agentRouter, petUC, vaccineUC, treatmentUC, observationUC, appointmentUC, supplyUC, summaryUC, cfg.Telegram, healthProfileService, metricService, workoutService, cfg.Location, logger)
 
-	healthAgg := app.NewHealthAggregator(map[string]app.HealthPinger{
+	healthAgg := app.NewHealthAggregatorWithVersion(map[string]app.HealthPinger{
 		"sqlite": database.NewChecker(cfg.DB),
-	})
+	}, cfg.Version)
 
 	healthHandler := pethttp.NewHealthHTTPHandler(healthAgg)
 	healthProfileHandler := healthhttp.NewProfileHandler(healthProfileService)

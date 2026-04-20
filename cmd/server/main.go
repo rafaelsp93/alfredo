@@ -139,6 +139,7 @@ func main() {
 		APIKey:   cfg.Auth.APIKey,
 		Location: loc,
 		Logger:   zapLogger,
+		Version:  version,
 	})
 	if err != nil {
 		zapLogger.Fatal("server wiring failed", zap.Error(err))
