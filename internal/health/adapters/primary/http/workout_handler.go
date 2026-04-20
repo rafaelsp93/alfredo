@@ -34,31 +34,43 @@ type workoutImportResponse struct {
 }
 
 type workoutSessionResponse struct {
-	ID                 int     `json:"id"`
-	ActivityType       string  `json:"activity_type"`
-	StartDate          string  `json:"start_date"`
-	EndDate            string  `json:"end_date"`
-	DurationSeconds    float64 `json:"duration_seconds"`
+	ID                 int      `json:"id"`
+	ActivityType       string   `json:"activity_type"`
+	StartDate          string   `json:"start_date"`
+	EndDate            string   `json:"end_date"`
+	DurationSeconds    float64  `json:"duration_seconds"`
 	ActiveCaloriesKcal *float64 `json:"active_calories_kcal,omitempty"`
 	BasalCaloriesKcal  *float64 `json:"basal_calories_kcal,omitempty"`
 	HRAvgBPM           *float64 `json:"hr_avg_bpm,omitempty"`
 	HRMinBPM           *float64 `json:"hr_min_bpm,omitempty"`
 	HRMaxBPM           *float64 `json:"hr_max_bpm,omitempty"`
 	DistanceM          *float64 `json:"distance_m,omitempty"`
-	Source             string  `json:"source"`
-	CreatedAt          string  `json:"created_at"`
-	UpdatedAt          string  `json:"updated_at"`
+	Source             string   `json:"source"`
+	CreatedAt          string   `json:"created_at"`
+	UpdatedAt          string   `json:"updated_at"`
 }
 
-// Apple Health Exporter workouts format.
+// Apple Health Exporter workouts format. The exporter has emitted both
+// activityName/value/minimum/maximum and activityType/sum/min/max shapes.
 type healthExporterWorkout struct {
-	ActivityName string                 `json:"activityName"`
-	StartDate    string                 `json:"startDate"`
-	EndDate      string                 `json:"endDate"`
-	Duration     float64                `json:"duration"`
-	Statistics   map[string]interface{} `json:"statistics"`
+	ActivityName string                               `json:"activityName"`
+	ActivityType string                               `json:"activityType"`
+	StartDate    string                               `json:"startDate"`
+	EndDate      string                               `json:"endDate"`
+	Duration     float64                              `json:"duration"`
+	Source       string                               `json:"source"`
+	Statistics   map[string]healthExporterWorkoutStat `json:"statistics"`
 }
 
+type healthExporterWorkoutStat struct {
+	Value   *float64 `json:"value"`
+	Sum     *float64 `json:"sum"`
+	Average *float64 `json:"average"`
+	Minimum *float64 `json:"minimum"`
+	Min     *float64 `json:"min"`
+	Maximum *float64 `json:"maximum"`
+	Max     *float64 `json:"max"`
+}
 
 func (h *WorkoutHandler) ImportWorkouts(c echo.Context) error {
 	body, err := io.ReadAll(c.Request().Body)
@@ -78,58 +90,38 @@ func (h *WorkoutHandler) ImportWorkouts(c echo.Context) error {
 	importedAt := time.Now().UTC()
 
 	for _, w := range payload.Workouts {
-		startDate, err := time.Parse(time.RFC3339, w.StartDate)
+		startDate, err := time.Parse(time.RFC3339Nano, w.StartDate)
 		if err != nil {
 			return c.JSON(http.StatusBadRequest, map[string]string{"error": "workout startDate must be RFC3339 (e.g. 2026-04-18T10:00:00Z)"})
 		}
-		endDate, err := time.Parse(time.RFC3339, w.EndDate)
+		endDate, err := time.Parse(time.RFC3339Nano, w.EndDate)
 		if err != nil {
 			return c.JSON(http.StatusBadRequest, map[string]string{"error": "workout endDate must be RFC3339 (e.g. 2026-04-18T10:30:00Z)"})
 		}
 
 		session := domain.WorkoutSession{
-			ActivityType:    w.ActivityName,
+			ActivityType:    firstNonEmpty(w.ActivityType, w.ActivityName),
 			StartDate:       startDate,
 			EndDate:         endDate,
 			DurationSeconds: w.Duration,
-			Source:          "Apple Watch",
+			Source:          firstNonEmpty(w.Source, "Apple Watch"),
 		}
 
 		// Map HKQuantityTypeIdentifier keys to domain fields
 		if stats := w.Statistics; stats != nil {
-			if val, ok := stats["HKQuantityTypeIdentifierActiveEnergyBurned"]; ok {
-				if stat, ok := val.(map[string]interface{}); ok {
-					if v, ok := stat["value"].(float64); ok {
-						session.ActiveCaloriesKcal = &v
-					}
-				}
+			if stat, ok := stats["HKQuantityTypeIdentifierActiveEnergyBurned"]; ok {
+				session.ActiveCaloriesKcal = firstFloatPtr(stat.Sum, stat.Value)
 			}
-			if val, ok := stats["HKQuantityTypeIdentifierBasalEnergyBurned"]; ok {
-				if stat, ok := val.(map[string]interface{}); ok {
-					if v, ok := stat["value"].(float64); ok {
-						session.BasalCaloriesKcal = &v
-					}
-				}
+			if stat, ok := stats["HKQuantityTypeIdentifierBasalEnergyBurned"]; ok {
+				session.BasalCaloriesKcal = firstFloatPtr(stat.Sum, stat.Value)
 			}
-			if val, ok := stats["HKQuantityTypeIdentifierHeartRate"]; ok {
-				if stat, ok := val.(map[string]interface{}); ok {
-					if avgV, ok := stat["average"].(float64); ok {
-						session.HRAvgBPM = &avgV
-					}
-					if minV, ok := stat["minimum"].(float64); ok {
-						session.HRMinBPM = &minV
-					}
-					if maxV, ok := stat["maximum"].(float64); ok {
-						session.HRMaxBPM = &maxV
-					}
-				}
+			if stat, ok := stats["HKQuantityTypeIdentifierHeartRate"]; ok {
+				session.HRAvgBPM = stat.Average
+				session.HRMinBPM = firstFloatPtr(stat.Min, stat.Minimum)
+				session.HRMaxBPM = firstFloatPtr(stat.Max, stat.Maximum)
 			}
-			if val, ok := stats["HKQuantityTypeIdentifierDistanceWalkingRunning"]; ok {
-				if stat, ok := val.(map[string]interface{}); ok {
-					if v, ok := stat["value"].(float64); ok {
-						session.DistanceM = &v
-					}
-				}
+			if stat, ok := stats["HKQuantityTypeIdentifierDistanceWalkingRunning"]; ok {
+				session.DistanceM = firstFloatPtr(stat.Sum, stat.Value)
 			}
 		}
 
@@ -189,4 +181,22 @@ func (h *WorkoutHandler) ListWorkouts(c echo.Context) error {
 	}
 
 	return c.JSON(http.StatusOK, responses)
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func firstFloatPtr(values ...*float64) *float64 {
+	for _, value := range values {
+		if value != nil {
+			return value
+		}
+	}
+	return nil
 }
