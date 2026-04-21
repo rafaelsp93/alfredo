@@ -90,7 +90,10 @@ func scanProfile(s scanner) (domain.HealthProfile, error) {
 
 func (r *ProfileRepository) GetCalendarID(ctx context.Context) (string, error) {
 	var id string
-	err := r.db.QueryRowContext(ctx, `SELECT google_calendar_id FROM health_profiles WHERE id = 1`).Scan(&id)
+	err := r.db.QueryRowContext(ctx, `SELECT google_calendar_id FROM health_calendar_settings WHERE id = 1`).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		err = r.db.QueryRowContext(ctx, `SELECT google_calendar_id FROM health_profiles WHERE id = 1`).Scan(&id)
+	}
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", nil
 	}
@@ -99,7 +102,7 @@ func (r *ProfileRepository) GetCalendarID(ctx context.Context) (string, error) {
 
 func (r *ProfileRepository) SetCalendarID(ctx context.Context, calendarID string) error {
 	_, err := r.db.ExecContext(ctx,
-		`INSERT INTO health_profiles (id, google_calendar_id) VALUES (1, ?) ON CONFLICT(id) DO UPDATE SET google_calendar_id = excluded.google_calendar_id`,
+		`INSERT INTO health_calendar_settings (id, google_calendar_id) VALUES (1, ?) ON CONFLICT(id) DO UPDATE SET google_calendar_id = excluded.google_calendar_id`,
 		calendarID)
 	return err
 }

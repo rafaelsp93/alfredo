@@ -114,6 +114,35 @@ func TestHealthAppointmentHandlerCreateValidationError(t *testing.T) {
 	}
 }
 
+func TestHealthAppointmentHandlerCreateRejectsInvalidJSONAndDate(t *testing.T) {
+	uc := &mockAppointmentUseCase{appts: make(map[string]*domain.HealthAppointment)}
+	handler := NewHealthAppointmentHandler(uc, time.UTC)
+	e := echo.New()
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/health/appointments", strings.NewReader(`{`))
+	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+	rec := httptest.NewRecorder()
+	if err := handler.create(e.NewContext(req, rec)); err != nil {
+		t.Fatalf("invalid json error: %v", err)
+	}
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("invalid json status = %d, want 400", rec.Code)
+	}
+
+	req = httptest.NewRequest(http.MethodPost, "/api/v1/health/appointments", strings.NewReader(`{
+		"specialty": "Cardiologia",
+		"scheduled_at": "2026-05-10"
+	}`))
+	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+	rec = httptest.NewRecorder()
+	if err := handler.create(e.NewContext(req, rec)); err != nil {
+		t.Fatalf("invalid date error: %v", err)
+	}
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("invalid date status = %d, want 400", rec.Code)
+	}
+}
+
 func TestHealthAppointmentHandlerList(t *testing.T) {
 	appt := &domain.HealthAppointment{
 		ID:        "appt-1",
@@ -134,6 +163,34 @@ func TestHealthAppointmentHandlerList(t *testing.T) {
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected status 200, got %d", rec.Code)
+	}
+}
+
+func TestHealthAppointmentHandlerListAndCreatePropagateUseCaseErrors(t *testing.T) {
+	uc := &mockAppointmentUseCase{err: domain.ErrValidation}
+	handler := NewHealthAppointmentHandler(uc, time.UTC)
+	e := echo.New()
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/health/appointments", nil)
+	rec := httptest.NewRecorder()
+	if err := handler.list(e.NewContext(req, rec)); err != nil {
+		t.Fatalf("list error: %v", err)
+	}
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("list status = %d, want 400", rec.Code)
+	}
+
+	req = httptest.NewRequest(http.MethodPost, "/api/v1/health/appointments", strings.NewReader(`{
+		"specialty": "Cardiologia",
+		"scheduled_at": "2026-05-10T09:00:00"
+	}`))
+	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+	rec = httptest.NewRecorder()
+	if err := handler.create(e.NewContext(req, rec)); err != nil {
+		t.Fatalf("create error: %v", err)
+	}
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("create status = %d, want 400", rec.Code)
 	}
 }
 
@@ -182,6 +239,23 @@ func TestHealthAppointmentHandlerGetByIDNotFound(t *testing.T) {
 	}
 }
 
+func TestHealthAppointmentHandlerGetByIDRequiresID(t *testing.T) {
+	uc := &mockAppointmentUseCase{appts: make(map[string]*domain.HealthAppointment)}
+	handler := NewHealthAppointmentHandler(uc, time.UTC)
+
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/health/appointments", nil)
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+
+	if err := handler.getByID(c); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", rec.Code)
+	}
+}
+
 func TestHealthAppointmentHandlerDelete(t *testing.T) {
 	appt := &domain.HealthAppointment{
 		ID:        "appt-1",
@@ -224,5 +298,22 @@ func TestHealthAppointmentHandlerDeleteNotFound(t *testing.T) {
 
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("expected status 404, got %d", rec.Code)
+	}
+}
+
+func TestHealthAppointmentHandlerDeleteRequiresID(t *testing.T) {
+	uc := &mockAppointmentUseCase{appts: make(map[string]*domain.HealthAppointment)}
+	handler := NewHealthAppointmentHandler(uc, time.UTC)
+
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodDelete, "/api/v1/health/appointments", nil)
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+
+	if err := handler.delete(c); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", rec.Code)
 	}
 }

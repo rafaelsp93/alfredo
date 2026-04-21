@@ -145,3 +145,40 @@ func TestHealthAppointmentServiceDelete(t *testing.T) {
 		t.Fatalf("expected ErrNotFound on delete of nonexistent, got %v", err)
 	}
 }
+
+func TestHealthAppointmentServiceList(t *testing.T) {
+	repo := &mockAppointmentRepository{
+		appointments: map[string]*domain.HealthAppointment{
+			"appt-1": {ID: "appt-1", Specialty: "Cardiologia"},
+			"appt-2": {ID: "appt-2", Specialty: "Dermatologia"},
+		},
+	}
+	svc := NewHealthAppointmentService(repo)
+
+	appts, err := svc.List(context.Background())
+	if err != nil {
+		t.Fatalf("list appointments: %v", err)
+	}
+	if len(appts) != 2 {
+		t.Fatalf("appointments len = %d, want 2", len(appts))
+	}
+}
+
+func TestHealthAppointmentServicePropagatesRepositoryErrors(t *testing.T) {
+	repo := &mockAppointmentRepository{lastErr: domain.ErrValidation}
+	svc := NewHealthAppointmentService(repo)
+	ctx := context.Background()
+
+	if _, err := svc.Create(ctx, CreateHealthAppointmentInput{}); err != domain.ErrValidation {
+		t.Fatalf("create err = %v, want %v", err, domain.ErrValidation)
+	}
+	if _, err := svc.GetByID(ctx, "appt-1"); err != domain.ErrValidation {
+		t.Fatalf("get err = %v, want %v", err, domain.ErrValidation)
+	}
+	if _, err := svc.List(ctx); err != domain.ErrValidation {
+		t.Fatalf("list err = %v, want %v", err, domain.ErrValidation)
+	}
+	if err := svc.Delete(ctx, "appt-1"); err != domain.ErrValidation {
+		t.Fatalf("delete err = %v, want %v", err, domain.ErrValidation)
+	}
+}

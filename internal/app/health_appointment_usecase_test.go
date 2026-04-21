@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -93,12 +94,15 @@ func (m *mockHealthCalendarIDStorer) SetCalendarID(ctx context.Context, calendar
 type mockCalendarPort struct {
 	createdCalendars map[string]bool
 	createdEvents    map[string]gcalendar.Event
-	err              error
+	deletedEvents    []string
+	createCalErr     error
+	createEventErr   error
+	deleteEventErr   error
 }
 
 func (m *mockCalendarPort) CreateCalendar(ctx context.Context, name string) (string, error) {
-	if m.err != nil {
-		return "", m.err
+	if m.createCalErr != nil {
+		return "", m.createCalErr
 	}
 	calID := "cal-" + name
 	if m.createdCalendars == nil {
@@ -116,8 +120,8 @@ func (m *mockCalendarPort) DeleteCalendar(ctx context.Context, calendarID string
 }
 
 func (m *mockCalendarPort) CreateEvent(ctx context.Context, calendarID string, event gcalendar.Event) (string, error) {
-	if m.err != nil {
-		return "", m.err
+	if m.createEventErr != nil {
+		return "", m.createEventErr
 	}
 	eventID := "evt-" + event.Title
 	if m.createdEvents == nil {
@@ -140,6 +144,10 @@ func (m *mockCalendarPort) StopRecurringEvent(ctx context.Context, calendarID st
 }
 
 func (m *mockCalendarPort) DeleteEvent(ctx context.Context, calendarID string, eventID string) error {
+	if m.deleteEventErr != nil {
+		return m.deleteEventErr
+	}
+	m.deletedEvents = append(m.deletedEvents, eventID)
 	if m.createdEvents != nil {
 		delete(m.createdEvents, eventID)
 	}
@@ -257,5 +265,129 @@ func TestHealthAppointmentUseCaseDeleteNotFound(t *testing.T) {
 	err := uc.Delete(ctx, "nonexistent")
 	if err != healthdomain.ErrNotFound {
 		t.Fatalf("expected ErrNotFound, got %v", err)
+	}
+}
+
+func TestHealthAppointmentUseCaseCreateValidationAndCalendarFailures(t *testing.T) {
+	uc := NewHealthAppointmentUseCase(
+		&mockHealthAppointmentServicer{appts: make(map[string]*healthdomain.HealthAppointment)},
+		&mockHealthCalendarIDStorer{},
+		&mockCalendarPort{},
+		&mockTelegramPort{},
+		"America/Sao_Paulo",
+		zap.NewNop(),
+	)
+
+	if _, err := uc.Create(context.Background(), "", time.Now(), nil, nil); !errors.Is(err, healthdomain.ErrValidation) {
+		t.Fatalf("empty specialty err = %v, want validation error", err)
+	}
+
+	calendar := &mockCalendarPort{createCalErr: errors.New("calendar unavailable")}
+	uc = NewHealthAppointmentUseCase(
+		&mockHealthAppointmentServicer{appts: make(map[string]*healthdomain.HealthAppointment)},
+		&mockHealthCalendarIDStorer{},
+		calendar,
+		&mockTelegramPort{},
+		"America/Sao_Paulo",
+		zap.NewNop(),
+	)
+	if _, err := uc.Create(context.Background(), "Cardiologia", time.Now(), nil, nil); err == nil {
+		t.Fatal("expected calendar provisioning error")
+	}
+
+	calendar = &mockCalendarPort{createEventErr: errors.New("event unavailable")}
+	uc = NewHealthAppointmentUseCase(
+		&mockHealthAppointmentServicer{appts: make(map[string]*healthdomain.HealthAppointment)},
+		&mockHealthCalendarIDStorer{calendarID: "cal-existing"},
+		calendar,
+		&mockTelegramPort{},
+		"America/Sao_Paulo",
+		zap.NewNop(),
+	)
+	if _, err := uc.Create(context.Background(), "Cardiologia", time.Now(), nil, nil); err == nil {
+		t.Fatal("expected calendar create event error")
+	}
+}
+
+func TestHealthAppointmentUseCaseCreateCompensatesAndSwallowsTelegramErrors(t *testing.T) {
+	apptSvc := &mockHealthAppointmentServicer{err: errors.New("db unavailable")}
+	calendar := &mockCalendarPort{}
+	telegram := &mockTelegramPort{err: errors.New("telegram unavailable")}
+	uc := NewHealthAppointmentUseCase(
+		apptSvc,
+		&mockHealthCalendarIDStorer{calendarID: "cal-existing"},
+		calendar,
+		telegram,
+		"America/Sao_Paulo",
+		zap.NewNop(),
+	)
+
+	if _, err := uc.Create(context.Background(), "Cardiologia", time.Now(), nil, nil); err == nil {
+		t.Fatal("expected service create error")
+	}
+	if len(calendar.deletedEvents) != 1 {
+		t.Fatalf("deleted events = %d, want 1 compensation", len(calendar.deletedEvents))
+	}
+
+	apptSvc = &mockHealthAppointmentServicer{appts: make(map[string]*healthdomain.HealthAppointment)}
+	calendar = &mockCalendarPort{}
+	uc = NewHealthAppointmentUseCase(
+		apptSvc,
+		&mockHealthCalendarIDStorer{calendarID: "cal-existing"},
+		calendar,
+		telegram,
+		"America/Sao_Paulo",
+		zap.NewNop(),
+	)
+	if _, err := uc.Create(context.Background(), "Cardiologia", time.Now(), nil, nil); err != nil {
+		t.Fatalf("unexpected telegram-swallow create err: %v", err)
+	}
+}
+
+func TestHealthAppointmentUseCaseDeleteBranches(t *testing.T) {
+	apptSvc := &mockHealthAppointmentServicer{appts: map[string]*healthdomain.HealthAppointment{
+		"appt-1": {
+			ID:                    "appt-1",
+			Specialty:             "Oftalmologia",
+			GoogleCalendarEventID: "",
+			CreatedAt:             time.Now(),
+		},
+	}}
+	calendar := &mockCalendarPort{}
+	uc := NewHealthAppointmentUseCase(
+		apptSvc,
+		&mockHealthCalendarIDStorer{calendarID: "cal-existing"},
+		calendar,
+		&mockTelegramPort{err: errors.New("telegram unavailable")},
+		"America/Sao_Paulo",
+		zap.NewNop(),
+	)
+
+	if err := uc.Delete(context.Background(), "appt-1"); err != nil {
+		t.Fatalf("delete without event id: %v", err)
+	}
+	if len(calendar.deletedEvents) != 0 {
+		t.Fatalf("deleted events = %d, want 0 when event id is empty", len(calendar.deletedEvents))
+	}
+
+	apptSvc = &mockHealthAppointmentServicer{appts: map[string]*healthdomain.HealthAppointment{
+		"appt-2": {
+			ID:                    "appt-2",
+			Specialty:             "Dermatologia",
+			GoogleCalendarEventID: "evt-2",
+			CreatedAt:             time.Now(),
+		},
+	}}
+	calendar = &mockCalendarPort{deleteEventErr: errors.New("delete failed")}
+	uc = NewHealthAppointmentUseCase(
+		apptSvc,
+		&mockHealthCalendarIDStorer{calendarID: "cal-existing"},
+		calendar,
+		&mockTelegramPort{},
+		"America/Sao_Paulo",
+		zap.NewNop(),
+	)
+	if err := uc.Delete(context.Background(), "appt-2"); err == nil {
+		t.Fatal("expected delete event error")
 	}
 }
